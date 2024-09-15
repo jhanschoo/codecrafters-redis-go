@@ -7,12 +7,19 @@ import (
 	"os"
 )
 
-// Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
-var _ = net.Listen
-var _ = os.Exit
+func handleConnection(c net.Conn) error {
+	buf := make([]byte, 1024)
+	for _, err := c.Read(buf); err != io.EOF; _, err = c.Read(buf) {
+		if err != nil {
+			fmt.Println("Error reading from connection: ", err.Error())
+			os.Exit(1)
+		}
+		c.Write([]byte("+PONG\r\n"))
+	}
+	return c.Close()
+}
 
 func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Println("Logs from your program will appear here!")
 
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
@@ -22,20 +29,13 @@ func main() {
 	}
 	defer l.Close()
 
-	c, err := l.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
-	}
-	defer c.Close()
-
-	buf := make([]byte, 1024)
-	for _, err = c.Read(buf); err != io.EOF; _, err = c.Read(buf) {
+	for {
+		c, err := l.Accept()
 		if err != nil {
-			fmt.Println("Error reading from connection: ", err.Error())
+			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		c.Write([]byte("+PONG\r\n"))
+		go handleConnection(c)
 	}
 
 }
