@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-func handleConnection(c net.Conn) error {
+func handleConn(c net.Conn) error {
 	buf := make([]byte, 1024)
 	for _, err := c.Read(buf); err != io.EOF; _, err = c.Read(buf) {
 		if err != nil {
@@ -35,7 +35,7 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		go handleConnection(c)
+		go handleConn(c)
 	}
 
 }
