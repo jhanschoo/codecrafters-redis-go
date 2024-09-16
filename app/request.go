@@ -1,6 +1,9 @@
 package main
 
-import "github.com/codecrafters-io/redis-starter-go/app/resp"
+import (
+	"github.com/codecrafters-io/redis-starter-go/app/command"
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
+)
 
 func handleRequest(r resp.RESP) resp.RESP {
 	ra, ok := r.(*resp.RESPArray)
@@ -15,5 +18,5 @@ func handleRequest(r resp.RESP) resp.RESP {
 		}
 		a[i] = s.Value
 	}
-	return handleCommand(a)
+	return command.Handle(a)
 }
