@@ -6,147 +6,143 @@ import (
 	"strings"
 )
 
+// Note: RESP types that refer to a sequence of bytes are implemented here as strings, since strings in Go are syntactic sugar for immutable byte arrays.
+
 type RESP interface {
-	Serialize() []byte
+	SerializeRESP() string
 }
 
 type RESPSimpleString struct {
 	Value string
 }
 
-func (r RESPSimpleString) Serialize() []byte {
-	return []byte("+" + r.Value + "\r\n")
+func (r RESPSimpleString) SerializeRESP() string {
+	return "+" + r.Value + "\r\n"
 }
 
-type RESPError struct {
+type RESPSimpleError struct {
 	Value string
 }
 
-func (r RESPError) Serialize() []byte {
-	return []byte("-" + r.Value + "\r\n")
+func (r RESPSimpleError) SerializeRESP() string {
+	return "-" + r.Value + "\r\n"
 }
 
 type RESPInteger struct {
 	Value int64
 }
 
-func (r RESPInteger) Serialize() []byte {
-	return []byte(":" + strconv.FormatInt(r.Value, 10) + "\r\n")
+func (r RESPInteger) SerializeRESP() string {
+	return ":" + strconv.FormatInt(r.Value, 10) + "\r\n"
 }
 
 type RESPBulkString struct {
-	Value []byte
+	Value string
 }
 
-func (r RESPBulkString) Serialize() (bs []byte) {
-	bs = []byte("$" + strconv.Itoa(len(r.Value)) + "\r\n")
-	bs = append(bs, r.Value...)
-	bs = append(bs, []byte("\r\n")...)
-	return
+func (r RESPBulkString) SerializeRESP() string {
+	return "$" + strconv.Itoa(len(r.Value)) + "\r\n" + r.Value + "\r\n"
 }
 
 type RESPArray struct {
 	Value []RESP
 }
 
-func (r RESPArray) Serialize() (bs []byte) {
-	bs = []byte("*" + strconv.Itoa(len(r.Value)) + "\r\n")
+func (r RESPArray) SerializeRESP() string {
+	var sb strings.Builder
+	sb.WriteString("*" + strconv.Itoa(len(r.Value)) + "\r\n")
 	for _, v := range r.Value {
-		bs = append(bs, v.Serialize()...)
+		sb.WriteString(v.SerializeRESP())
 	}
-	return
+	return sb.String()
 }
 
 type RESPNull struct{}
 
-func (r RESPNull) Serialize() []byte {
-	return []byte("_\r\n")
+func (r RESPNull) SerializeRESP() string {
+	return "_\r\n"
 }
 
 type RESPBoolean struct {
 	Value bool
 }
 
-func (r RESPBoolean) Serialize() []byte {
+func (r RESPBoolean) SerializeRESP() string {
 	if r.Value {
-		return []byte("#t\r\n")
+		return "#t\r\n"
 	}
-	return []byte("#f\r\n")
+	return "#f\r\n"
 }
 
 type RESPDouble struct {
 	Value float64
 }
 
-func (r RESPDouble) Serialize() []byte {
-	return []byte("," + strings.ToLower(strconv.FormatFloat(r.Value, 'g', -1, 64)) + "\r\n")
+func (r RESPDouble) SerializeRESP() string {
+	return "," + strings.ToLower(strconv.FormatFloat(r.Value, 'g', -1, 64)) + "\r\n"
 }
 
 type RESPBignum struct {
 	Value big.Int
 }
 
-func (r RESPBignum) Serialize() []byte {
-	return []byte("(" + r.Value.String() + "\r\n")
+func (r RESPBignum) SerializeRESP() string {
+	return "(" + r.Value.String() + "\r\n"
 }
 
 type RESPBulkError struct {
-	Value []byte
+	Value string
 }
 
-func (r RESPBulkError) Serialize() (bs []byte) {
-	bs = []byte("!" + strconv.Itoa(len(r.Value)) + "\r\n")
-	bs = append(bs, r.Value...)
-	bs = append(bs, []byte("\r\n")...)
-	return
+func (r RESPBulkError) SerializeRESP() string {
+	return "!" + strconv.Itoa(len(r.Value)) + "\r\n" + r.Value + "\r\n"
 }
 
 type RESPVerbatimString struct {
 	Encoding [3]byte
-	Value    []byte
+	Value    string
 }
 
-func (r RESPVerbatimString) Serialize() (bs []byte) {
-	bs = []byte("=")
-	bs = append(bs, r.Encoding[:]...)
-	bs = append(bs, r.Value...)
-	bs = append(bs, []byte("\r\n")...)
-	return
+func (r RESPVerbatimString) SerializeRESP() string {
+	return "=" + strconv.Itoa(len(r.Value)+4) + "\r\n" + string(r.Encoding[:]) + ":" + r.Value + "\r\n"
 }
 
 type RESPMap struct {
 	Value []RESP
 }
 
-func (r RESPMap) Serialize() (bs []byte) {
-	bs = []byte("%" + strconv.Itoa(len(r.Value)/2) + "\r\n")
+func (r RESPMap) SerializeRESP() string {
+	var sb strings.Builder
+	sb.WriteString("%" + strconv.Itoa(len(r.Value)/2) + "\r\n")
 	for i := 0; i < len(r.Value); i += 2 {
-		bs = append(bs, r.Value[i].Serialize()...)
-		bs = append(bs, r.Value[i+1].Serialize()...)
+		sb.WriteString(r.Value[i].SerializeRESP())
+		sb.WriteString(r.Value[i+1].SerializeRESP())
 	}
-	return
+	return sb.String()
 }
 
 type RESPSet struct {
 	Value []RESP
 }
 
-func (r RESPSet) Serialize() (bs []byte) {
-	bs = []byte("~" + strconv.Itoa(len(r.Value)) + "\r\n")
+func (r RESPSet) SerializeRESP() string {
+	var sb strings.Builder
+	sb.WriteString("~" + strconv.Itoa(len(r.Value)) + "\r\n")
 	for _, v := range r.Value {
-		bs = append(bs, v.Serialize()...)
+		sb.WriteString(v.SerializeRESP())
 	}
-	return
+	return sb.String()
 }
 
 type RESPPush struct {
 	Value []RESP
 }
 
-func (r RESPPush) Serialize() (bs []byte) {
-	bs = []byte(">" + strconv.Itoa(len(r.Value)) + "\r\n")
+func (r RESPPush) SerializeRESP() string {
+	var sb strings.Builder
+	sb.WriteString(">" + strconv.Itoa(len(r.Value)) + "\r\n")
 	for _, v := range r.Value {
-		bs = append(bs, v.Serialize()...)
+		sb.WriteString(v.SerializeRESP())
 	}
-	return
+	return sb.String()
 }
