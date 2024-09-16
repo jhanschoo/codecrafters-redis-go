@@ -15,10 +15,10 @@ func handleGet(sa []string) resp.RESP {
 	v, ok := state[sa[1]]
 	stateRWMutex.RUnlock()
 	if !ok {
-		return &resp.RESPNull{}
+		return &resp.RESPNull{CompatibilityFlag: 1}
 	}
 	if v.expiresAt != -1 && v.expiresAt < now.UnixMilli() {
-		return &resp.RESPNull{}
+		return &resp.RESPNull{CompatibilityFlag: 1}
 	}
 	return &resp.RESPBulkString{Value: v.value}
 }

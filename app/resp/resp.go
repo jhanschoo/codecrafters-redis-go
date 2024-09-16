@@ -57,10 +57,23 @@ func (r RESPArray) SerializeRESP() string {
 	return sb.String()
 }
 
-type RESPNull struct{}
+// compatibilityFlag is set to
+// 1 if it serializes to "$-1\r\n"
+// 2 if it serializes to "*-1\r\n"
+// and any value (0 preferred) if it serializes to "_\r\n"
+type RESPNull struct {
+	CompatibilityFlag int
+}
 
 func (r RESPNull) SerializeRESP() string {
-	return "_\r\n"
+	switch r.CompatibilityFlag {
+	case 1:
+		return "$-1\r\n"
+	case 2:
+		return "*-1\r\n"
+	default:
+		return "_\r\n"
+	}
 }
 
 type RESPBoolean struct {
