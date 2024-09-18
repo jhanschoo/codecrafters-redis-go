@@ -11,6 +11,7 @@ var commandHandlers = map[string]func(db int64, sa []string) resp.RESP{
 	"GET":    handleGet,
 	"CONFIG": handleConfigCommands,
 	"KEYS":   handleKeys,
+	"INFO":   handleInfo,
 }
 
 func Handle(db int64, sa []string) resp.RESP {
