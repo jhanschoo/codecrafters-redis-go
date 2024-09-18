@@ -2,8 +2,6 @@ package respreader
 
 import (
 	"bufio"
-	"errors"
-	"fmt"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
@@ -16,21 +14,20 @@ type bufArrayReader struct {
 	buf           []resp.RESP
 }
 
+var _ Reader = (*bufArrayReader)(nil)
+
 func newBufArrayReader(br *bufio.Reader) Reader {
 	return &bufArrayReader{br, newInternalBufIntegerReader(br), -2, nil, nil}
 }
 
 func (rr *bufArrayReader) ReadRESP() (resp.RESP, error) {
 	if rr.buf == nil {
-		fmt.Println("bufArrayReader.ReadRESP: parsing length")
-		fmt.Println("bufArrayReader.ReadRESP: delegating to bufIntegerReader")
 		rint, err := rr.lengthReader.readRESPInteger()
 		if err != nil {
 			return nil, err
 		}
 		if rint.Value < 0 {
-			fmt.Println("bufArrayReader.ReadRESP: error negative length")
-			return nil, errors.New("negative length")
+			return nil, ErrorNegativeLength
 		}
 		rr.length = rint.Value
 		rr.lengthReader = nil
@@ -38,7 +35,7 @@ func (rr *bufArrayReader) ReadRESP() (resp.RESP, error) {
 	}
 	for len(rr.buf) < int(rr.length) {
 		if rr.elementReader == nil {
-			rr.elementReader = newInternalBufPayloadReader(rr.br, true)
+			rr.elementReader = newInternalBufPayloadReader(rr.br)
 		}
 		robj, err := rr.elementReader.ReadRESP()
 		if err != nil {
@@ -46,6 +43,5 @@ func (rr *bufArrayReader) ReadRESP() (resp.RESP, error) {
 		}
 		rr.buf = append(rr.buf, robj)
 	}
-	fmt.Println("bufArrayReader.ReadRESP: returning array of", len(rr.buf), "elements")
 	return &resp.RESPArray{Value: rr.buf}, nil
 }

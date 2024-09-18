@@ -1,24 +1,18 @@
 package command
 
 import (
-	"time"
-
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
+	"github.com/codecrafters-io/redis-starter-go/app/state"
 )
 
 func handleGet(sa []string) resp.RESP {
-	now := time.Now()
 	if len(sa) != 2 {
 		return &resp.RESPSimpleError{Value: "Invalid input: expected 2-element array"}
 	}
-	stateRWMutex.RLock()
-	v, ok := state[sa[1]]
-	stateRWMutex.RUnlock()
+	key := sa[1]
+	value, ok := state.Get(key)
 	if !ok {
 		return &resp.RESPNull{CompatibilityFlag: 1}
 	}
-	if v.expiresAt != -1 && v.expiresAt < now.UnixMilli() {
-		return &resp.RESPNull{CompatibilityFlag: 1}
-	}
-	return &resp.RESPBulkString{Value: v.value}
+	return &resp.RESPBulkString{Value: value}
 }

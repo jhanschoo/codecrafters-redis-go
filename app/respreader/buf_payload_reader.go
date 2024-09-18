@@ -3,8 +3,8 @@ package respreader
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"io"
+	"log"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
@@ -15,8 +15,10 @@ type bufPayloadReader struct {
 	isInternal bool
 }
 
-func newInternalBufPayloadReader(br *bufio.Reader, isInternal bool) *bufPayloadReader {
-	return &bufPayloadReader{br, nil, isInternal}
+var _ Reader = (*bufPayloadReader)(nil)
+
+func newInternalBufPayloadReader(br *bufio.Reader) *bufPayloadReader {
+	return &bufPayloadReader{br, nil, true}
 }
 
 var subreaderMap = map[byte]func(br *bufio.Reader) Reader{
@@ -28,24 +30,19 @@ var subreaderMap = map[byte]func(br *bufio.Reader) Reader{
 }
 
 func (rr *bufPayloadReader) ReadRESP() (resp.RESP, error) {
-	fmt.Println("bufPayloadReader.ReadRESP")
 	if rr.subReader == nil {
-		fmt.Println("bufPayloadReader.ReadRESP: not in intermediate state, reading type byte")
 		b, err := rr.br.ReadByte()
 		if err != nil {
-			fmt.Println("bufPayloadReader.ReadRESP: error", err, "(parsing type byte restarted)")
 			if rr.isInternal {
-				err = &readerError{err, false}
+				err = &shouldNotRestartError{err}
 			}
 			return nil, err
 		}
-		fmt.Println("bufPayloadReader.ReadRESP: type byte", b)
 		subReaderCreator, ok := subreaderMap[b]
 		if !ok {
-			fmt.Println("bufPayloadReader.ReadRESP: error unimplemented type", b)
-			err = errors.New("bufPayloadReader.ReadRESP: unimplemented type")
+			err = ErrorUnimplementedDataType
 			if rr.isInternal {
-				err = &readerError{err, false}
+				err = &shouldNotRestartError{err}
 			}
 			return nil, err
 		}
@@ -53,18 +50,17 @@ func (rr *bufPayloadReader) ReadRESP() (resp.RESP, error) {
 	}
 	ret, err := rr.subReader.ReadRESP()
 	if err != nil {
-		v, ok := err.(*readerError)
 		shouldRestart := true
-		if ok {
-			shouldRestart = v.shouldRestart
-			err = v.Err
+		if errors.As(err, (*shouldNotRestartError)(nil)) {
+			err = errors.Unwrap(err)
+			shouldRestart = false
 		}
 		if shouldRestart && err != io.ErrNoProgress {
-			fmt.Println("bufPayloadReader.ReadRESP: error", err, "(parsing payload restarted to type byte)")
+			log.Printf("bufPayloadReader.ReadRESP: error %v (parsing payload restarted to just before type byte)\n", err)
 			rr.subReader = nil
 		}
 		if rr.isInternal {
-			err = &readerError{err, false}
+			err = &shouldNotRestartError{err}
 		}
 		return nil, err
 	}

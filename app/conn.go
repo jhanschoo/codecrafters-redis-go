@@ -2,8 +2,9 @@ package main
 
 import (
 	"bufio"
-	"fmt"
+	"log"
 	"net"
+	"strconv"
 
 	"github.com/codecrafters-io/redis-starter-go/app/respreader"
 )
@@ -14,12 +15,12 @@ func handleConn(c net.Conn) error {
 	for {
 		req, err := r.ReadRESP()
 		if err != nil {
-			fmt.Println("handleConn: error reading input", err)
+			log.Println("handleConn: error reading input", err)
 			return c.Close()
 		}
-		fmt.Println("handleConn: received request", req.SerializeRESP())
+		log.Println("handleConn: received request", strconv.Quote(req.SerializeRESP()))
 		res := handleRequest(req)
-		fmt.Println("handleConn: writing response", res.SerializeRESP())
+		log.Println("handleConn: writing response", strconv.Quote(res.SerializeRESP()))
 		c.Write([]byte(res.SerializeRESP()))
 	}
 }

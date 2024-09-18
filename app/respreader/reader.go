@@ -3,6 +3,7 @@ package respreader
 
 import (
 	"bufio"
+	"errors"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
@@ -15,17 +16,26 @@ type Reader interface {
 	ReadRESP() (resp.RESP, error)
 }
 
-// readerError is an error that wraps around underlying errors to inform the caller whether the parsing process should be restarted. This internal signalling enables the parser to recover from errors at well-defined points in the parsing process. At the time of writing, only the payload reader uses this and only when it wants to set `shouldRestart` to false. (this then bubbles up to higher levels of payload readers)
+// shouldNotRestartError is an error that wraps around underlying errors to inform parent readers their parsing process should NOT be restarted. This internal signalling enables the parser to recover from errors at well-defined points in the parsing process, without discarding the parse altogether. At the time of writing, only the payload reader uses this.
 // shouldRestart is true if the parsing process should be restarted from the beginning of the current RESP object, except when the underlying error is io.ErrNoProgress.
-type readerError struct {
-	Err           error
-	shouldRestart bool
+type shouldNotRestartError struct {
+	error
 }
 
-func (e *readerError) Error() string {
-	return e.Err.Error()
+var _ error = (*shouldNotRestartError)(nil)
+
+func (e *shouldNotRestartError) Unwrap() error {
+	return e.error
 }
 
 func NewBufReader(is *bufio.Reader) Reader {
-	return newInternalBufPayloadReader(is, false)
+	r := newInternalBufPayloadReader(is)
+	r.isInternal = false
+	return r
 }
+
+var (
+	ErrorUnimplementedDataType = errors.New("RESPReader: unimplemented type")
+	ErrorNegativeLength        = errors.New("RESPReader: negative length")
+	ErrorInvalidTerminator     = errors.New("RESPReader: invalid terminator")
+)

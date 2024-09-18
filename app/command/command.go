@@ -5,10 +5,11 @@ import (
 )
 
 var commandHandlers = map[string]func(sa []string) resp.RESP{
-	"PING": handlePing,
-	"ECHO": handleEcho,
-	"SET":  handleSet,
-	"GET":  handleGet,
+	"PING":   handlePing,
+	"ECHO":   handleEcho,
+	"SET":    handleSet,
+	"GET":    handleGet,
+	"CONFIG": handleConfigCommands,
 }
 
 func Handle(sa []string) resp.RESP {
