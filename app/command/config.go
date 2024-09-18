@@ -4,11 +4,11 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-var configCommandHandlers = map[string]func(sa []string) resp.RESP{
+var configCommandHandlers = map[string]func(db int64, sa []string) resp.RESP{
 	"GET": handleConfigGet,
 }
 
-func handleConfigCommands(sa []string) resp.RESP {
+func handleConfigCommands(db int64, sa []string) resp.RESP {
 	if len(sa) <= 1 {
 		return &resp.RESPSimpleError{Value: "Unsupported CONFIG command"}
 	}
@@ -16,6 +16,6 @@ func handleConfigCommands(sa []string) resp.RESP {
 	if !ok {
 		return &resp.RESPSimpleError{Value: "Unsupported CONFIG " + sa[1] + " command"}
 	}
-	return handler(sa)
+	return handler(db, sa)
 
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/state"
 )
 
-func handleSet(sa []string) resp.RESP {
+func handleSet(db int64, sa []string) resp.RESP {
 	var (
 		key   string
 		value string
@@ -33,6 +33,6 @@ func handleSet(sa []string) resp.RESP {
 	default:
 		return &resp.RESPSimpleError{Value: "Invalid input: expected 3 or 5-element array"}
 	}
-	state.Set(key, value, px)
+	state.Set(db, key, value, px)
 	return &resp.RESPSimpleString{Value: "OK"}
 }

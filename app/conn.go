@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"log"
 	"net"
 	"strconv"
@@ -10,16 +11,21 @@ import (
 )
 
 func handleConn(c net.Conn) error {
+	var db int64 = 0
 	r := respreader.NewBufReader(bufio.NewReader(c))
 
 	for {
 		req, err := r.ReadRESP()
 		if err != nil {
-			log.Println("handleConn: error reading input", err)
+			if err == io.EOF {
+				log.Println("handleConn: connection closed by client")
+			} else {
+				log.Println("handleConn: error reading input", err)
+			}
 			return c.Close()
 		}
 		log.Println("handleConn: received request", strconv.Quote(req.SerializeRESP()))
-		res := handleRequest(req)
+		res := handleRequest(db, req)
 		log.Println("handleConn: writing response", strconv.Quote(res.SerializeRESP()))
 		c.Write([]byte(res.SerializeRESP()))
 	}

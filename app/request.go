@@ -5,7 +5,7 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-func handleRequest(r resp.RESP) resp.RESP {
+func handleRequest(db int64, r resp.RESP) resp.RESP {
 	ra, ok := r.(*resp.RESPArray)
 	if !ok {
 		return &resp.RESPSimpleError{Value: "Invalid input: expected array"}
@@ -18,5 +18,5 @@ func handleRequest(r resp.RESP) resp.RESP {
 		}
 		a[i] = s.Value
 	}
-	return command.Handle(a)
+	return command.Handle(db, a)
 }

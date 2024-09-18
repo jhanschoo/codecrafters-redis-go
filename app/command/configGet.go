@@ -5,7 +5,7 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-func handleConfigGet(sa []string) resp.RESP {
+func handleConfigGet(_ int64, sa []string) resp.RESP {
 	ra := make([]resp.RESP, 0, (len(sa)-2)*2)
 	// This handles only the special case where len(sa) == 3 and the sole argument matckes a config key.
 	v, ok := config.Get(sa[2])

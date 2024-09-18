@@ -1,70 +1,145 @@
 package state
 
 import (
+	"bufio"
+	"errors"
+	"io/fs"
 	"log"
+	"os"
+	"path"
 	"sync"
 	"time"
+
+	"github.com/codecrafters-io/redis-starter-go/app/config"
+	"github.com/codecrafters-io/redis-starter-go/app/rdbreader"
 )
 
-type stateValue struct {
+type StateValue struct {
 	string
-	expiresAt *time.Time
+	expiresAt time.Time
+}
+
+func NewStateValue(value string, expiresAt time.Time) StateValue {
+	return StateValue{string: value, expiresAt: expiresAt}
+}
+
+func InitializeState() {
+	dir, dirOk := config.Get("dir")
+	dbfilename, dbfilenameOk := config.Get("dbfilename")
+	if dirOk && dbfilenameOk {
+		filePath := path.Join(dir, dbfilename)
+		f, err := os.Open(path.Join(dir, dbfilename))
+		if errors.Is(err, fs.ErrNotExist) {
+			log.Printf("RDB file %s does not exist, skipping initialization from RDB file", filePath)
+		} else {
+			// defer is OK since we don'b care about handling the error here
+			defer f.Close()
+			if err != nil {
+				log.Fatalf("failed to open RDB file: %v", err)
+			}
+			br := bufio.NewReader(f)
+			initializeFromRDB(br)
+			return
+		}
+	}
+	log.Println("No RDB file specified or file does not exist, initializing empty state")
+	state = map[int64]*stateShard{
+		0: {data: make(map[string]StateValue)},
+	}
+}
+
+func initializeFromRDB(br *bufio.Reader) {
+	dbs, err := rdbreader.ReadRDB(br)
+	if err != nil {
+		log.Fatalf("failed to read RDB: %v", err)
+	}
+	state = make(map[int64]*stateShard)
+	for db, data := range dbs {
+		state[db] = &stateShard{data: make(map[string]StateValue)}
+		for k, v := range data {
+			log.Printf("db=%d, key=%s, value=%s, expiresAt=%v\n", db, k, v.Value, v.ExpiresAt)
+			state[db].data[k] = NewStateValue(v.Value, v.ExpiresAt)
+		}
+	}
 }
 
 type stateShard struct {
-	data map[string]stateValue
+	data map[string]StateValue
 	mu   sync.RWMutex
 }
 
-var state = stateShard{data: make(map[string]stateValue)}
+var state map[int64]*stateShard
 
 // getStateShardForKey for now returns a global state variable.
 // This function is intended to allow us to shard the state in the future.
 // to achieve greater concurrency.
-func getStateShardForKey(_ string) *stateShard {
-	return &state
+func getStateShardForDbAndKey(db int64, _ string) *stateShard {
+	return state[db]
 }
 
-func getAllMapsWithMutex() []*stateShard {
-	return []*stateShard{&state}
+func getAllStateShardsForDb(db int64) []*stateShard {
+	return []*stateShard{state[db]}
 }
 
-func Set(key, value string, px int64) {
-	ml := getStateShardForKey(key)
-	var expiresAt *time.Time = nil
+func Set(db int64, key, value string, px int64) {
+	ml := getStateShardForDbAndKey(db, key)
+	// zero time means no expiry
+	var expiresAt time.Time
 	if px != -1 {
-		t := time.Now().Add(time.Duration(px) * time.Millisecond)
-		expiresAt = &t
+		expiresAt = time.Now().Add(time.Duration(px) * time.Millisecond)
 	}
 	ml.mu.Lock()
-	ml.data[key] = stateValue{string: value, expiresAt: expiresAt}
+	ml.data[key] = StateValue{string: value, expiresAt: expiresAt}
 	ml.mu.Unlock()
 }
 
-func Get(key string) (string, bool) {
-	ml := getStateShardForKey(key)
+func Get(db int64, key string) (string, bool) {
+	ml := getStateShardForDbAndKey(db, key)
 	ml.mu.RLock()
 	v, ok := ml.data[key]
 	ml.mu.RUnlock()
 	if !ok {
 		return "", false
 	}
-	if v.expiresAt != nil && v.expiresAt.Before(time.Now()) {
-		go tryEvictExpiredKey(key)
+	if !v.expiresAt.IsZero() && v.expiresAt.Before(time.Now()) {
+		go tryEvictExpiredKey(db, key)
 		return "", false
 	}
 	return v.string, true
 }
 
-func tryEvictExpiredKey(key string) {
-	ml := getStateShardForKey(key)
+func Keys(db int64) []string {
+	lengthEstimate := 0
+	shards := getAllStateShardsForDb(db)
+	for _, shard := range shards {
+		lengthEstimate += len(shard.data) + 10
+	}
+	keys := make([]string, 0, lengthEstimate)
+	for _, shard := range shards {
+		shard.mu.RLock()
+	}
+	now := time.Now()
+	for _, shard := range shards {
+		for k, v := range shard.data {
+			if !v.expiresAt.IsZero() && v.expiresAt.Before(now) {
+				continue
+			}
+			keys = append(keys, k)
+		}
+		shard.mu.RUnlock()
+	}
+	return keys
+}
+
+func tryEvictExpiredKey(db int64, key string) {
+	ml := getStateShardForDbAndKey(db, key)
 	ml.mu.Lock()
 	defer ml.mu.Unlock()
 	v, ok := ml.data[key]
 	if !ok {
 		return
 	}
-	if v.expiresAt != nil && v.expiresAt.Before(time.Now()) {
+	if !v.expiresAt.IsZero() && v.expiresAt.Before(time.Now()) {
 		delete(ml.data, key)
 	}
 }
@@ -81,26 +156,28 @@ func SyncTryEvictExpiredKeysSweep() {
 	)
 
 	log.Println("SyncTryEvictExpiredKeysSweep: started")
-	for _, ml := range getAllMapsWithMutex() {
-		if len(ml.data) < evictionSweepMapSizeThreshold {
-			continue
-		}
-		now := time.Now()
-		ml.mu.Lock()
-		i := 0
-		for k, v := range ml.data {
-			if v.expiresAt != nil && v.expiresAt.Before(now) {
-				delete(ml.data, k)
+	for db := range state {
+		for _, ml := range getAllStateShardsForDb(db) {
+			if len(ml.data) < evictionSweepMapSizeThreshold {
+				continue
 			}
-			i++
-			if i >= evictionSweepCountPerAcquisition {
-				i = 0
-				ml.mu.Unlock()
-				time.Sleep(evictionSweepSleepPerAcquisition)
-				now = time.Now()
-				ml.mu.Lock()
+			now := time.Now()
+			ml.mu.Lock()
+			i := 0
+			for k, v := range ml.data {
+				if !v.expiresAt.IsZero() && v.expiresAt.Before(now) {
+					delete(ml.data, k)
+				}
+				i++
+				if i >= evictionSweepCountPerAcquisition {
+					i = 0
+					ml.mu.Unlock()
+					time.Sleep(evictionSweepSleepPerAcquisition)
+					now = time.Now()
+					ml.mu.Lock()
+				}
 			}
+			ml.mu.Unlock()
 		}
-		ml.mu.Unlock()
 	}
 }

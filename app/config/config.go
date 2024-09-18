@@ -14,6 +14,6 @@ func Get(key string) (string, bool) {
 	return *s, a
 }
 
-func ParseConfig() {
+func InitializeConfig() {
 	flag.Parse()
 }

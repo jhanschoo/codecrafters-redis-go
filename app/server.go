@@ -7,12 +7,15 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/daemon"
+	"github.com/codecrafters-io/redis-starter-go/app/state"
 )
 
 func main() {
 	log.Println("Logs from your program will appear here!")
 
-	config.ParseConfig()
+	config.InitializeConfig()
+
+	state.InitializeState()
 
 	daemon.InitializeDaemons()
 
