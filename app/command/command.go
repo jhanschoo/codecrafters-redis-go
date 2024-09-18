@@ -5,13 +5,14 @@ import (
 )
 
 var commandHandlers = map[string]func(db int64, sa []string) resp.RESP{
-	"PING":   handlePing,
-	"ECHO":   handleEcho,
-	"SET":    handleSet,
-	"GET":    handleGet,
-	"CONFIG": handleConfigCommands,
-	"KEYS":   handleKeys,
-	"INFO":   handleInfo,
+	"PING":     handlePing,
+	"ECHO":     handleEcho,
+	"SET":      handleSet,
+	"GET":      handleGet,
+	"CONFIG":   handleConfigCommands,
+	"KEYS":     handleKeys,
+	"INFO":     handleInfo,
+	"REPLCONF": handleReplconf,
 }
 
 func Handle(db int64, sa []string) resp.RESP {

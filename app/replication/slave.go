@@ -4,18 +4,16 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 
+	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-var (
-	respPing = resp.RESPArray{Value: []resp.RESP{&resp.RESPSimpleString{Value: "PING"}}}.SerializeRESP()
-	respPong = resp.RESPSimpleString{Value: "PONG"}.SerializeRESP()
-)
-
 func InitializeSlave(replInfo *ReplicationInfo) error {
+	log.Println("initializeSlave: started")
 	replInfo.Role = "slave"
 
 	masterAddrSlice := strings.Split(replInfo.Replicaof, " ")
@@ -39,7 +37,26 @@ func InitializeSlave(replInfo *ReplicationInfo) error {
 
 func performHandshakeAsSlave(conn net.Conn, replInfo *ReplicationInfo) error {
 	brw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
-	if _, err := brw.Write([]byte(respPing)); err != nil {
+	if err := reqExpectingSimpleStringRes(brw, []string{"PING"}, "PONG"); err != nil {
+		return err
+	}
+	port, _ := config.Get("port")
+	if err := reqExpectingSimpleStringRes(brw, []string{"REPLCONF", "listening-port", port}, "OK"); err != nil {
+		return err
+	}
+	if err := reqExpectingSimpleStringRes(brw, []string{"REPLCONF", "capa", "psync2"}, "OK"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func reqExpectingSimpleStringRes(brw *bufio.ReadWriter, req []string, expectedRes string) error {
+	reqArrayValue := make([]resp.RESP, 0, len(req))
+	for _, r := range req {
+		reqArrayValue = append(reqArrayValue, &resp.RESPBulkString{Value: r})
+	}
+	reqBytes := []byte(resp.RESPArray{Value: reqArrayValue}.SerializeRESP())
+	if _, err := brw.Write(reqBytes); err != nil {
 		return err
 	}
 	if err := brw.Flush(); err != nil {
@@ -50,14 +67,9 @@ func performHandshakeAsSlave(conn net.Conn, replInfo *ReplicationInfo) error {
 	if err != nil {
 		return err
 	}
-	if string(res) != respPong {
-		return fmt.Errorf("expected %s, received %s", respPong, string(res))
+	expectedResResp := resp.RESPSimpleString{Value: expectedRes}.SerializeRESP()
+	if string(res) != expectedResResp {
+		return fmt.Errorf("expected %s, received %s", expectedResResp, string(res))
 	}
-	// Send REPLCONF listening-port <port>
-	// Receive OK
-	// Send SYNC
-	// Receive +FULLRESYNC <replid> <offset>
-	// Receive DB data
-	// Receive +CONTINUE
 	return nil
 }

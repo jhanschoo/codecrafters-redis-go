@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	log.Println("Logs from your program will appear here!")
+	log.Println("Starting server")
 
 	config.InitializeConfig()
 	port, _ := config.Get("port")
