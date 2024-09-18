@@ -2,9 +2,9 @@ package replication
 
 import (
 	"encoding/json"
+	"log"
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
-	"github.com/codecrafters-io/redis-starter-go/app/utility"
 )
 
 type ReplicationInfo struct {
@@ -18,13 +18,16 @@ var replicationInfo ReplicationInfo
 
 func InitializeReplication() {
 	replicaof, _ := config.Get("replicaof")
+	var err error
 	switch replicaof {
 	case "":
-		replicationInfo.Role = "master"
-		replicationInfo.MasterReplid = utility.RandomAlphaNumericString(40)
+		err = initializeMaster(&replicationInfo)
 	default:
-		replicationInfo.Role = "slave"
 		replicationInfo.Replicaof = replicaof
+		err = InitializeSlave(&replicationInfo)
+	}
+	if err != nil {
+		log.Fatalf("Failed to initialize replication: %v", err)
 	}
 }
 
