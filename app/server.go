@@ -14,14 +14,19 @@ func main() {
 	log.Println("Logs from your program will appear here!")
 
 	config.InitializeConfig()
+	port, ok := config.Get("port")
+	if !ok {
+		log.Println("Failed to read port from config")
+		os.Exit(1)
+	}
 
 	state.InitializeState()
 
 	daemon.InitializeDaemons()
 
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
+	l, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
-		log.Println("Failed to bind to port 6379")
+		log.Println("Failed to bind to port", port)
 		os.Exit(1)
 	}
 	defer l.Close()
