@@ -187,3 +187,15 @@ func (r RESPPush) SerializeRESP() string {
 	}
 	return sb.String()
 }
+
+func ParseStringSlice(sa []string) RESP {
+	av := make([]RESP, len(sa))
+	for i, s := range sa {
+		av[i] = &RESPBulkString{Value: s}
+	}
+	return &RESPArray{Value: av}
+}
+
+func Is(r1 RESP, r2 RESP) bool {
+	return r1.SerializeRESP() == r2.SerializeRESP()
+}

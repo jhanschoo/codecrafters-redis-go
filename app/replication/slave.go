@@ -1,75 +1,62 @@
 package replication
 
 import (
-	"bufio"
 	"errors"
-	"fmt"
 	"log"
-	"net"
+	"strconv"
 	"strings"
 
+	"github.com/codecrafters-io/redis-starter-go/app/client"
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-func InitializeSlave(replInfo *ReplicationInfo) error {
+func InitializeSlave(replInfo *ReplicationInfo, replicaof string) error {
 	log.Println("initializeSlave: started")
 	replInfo.Role = "slave"
 
-	masterAddrSlice := strings.Split(replInfo.Replicaof, " ")
-	if len(masterAddrSlice) != 2 {
-		return errors.New("invalid input: expected replicaof to be in the format 'host port'")
-	}
-	masterAddr := strings.Join(masterAddrSlice, ":")
-	tcpAddr, err := net.ResolveTCPAddr("tcp", masterAddr)
+	var err error
+	replInfo.masterClient, err = client.NewReplicaClient(replicaof)
 	if err != nil {
+		replInfo.masterClient.Close()
 		return err
 	}
 
-	conn, err := net.DialTCP("tcp", nil, tcpAddr)
-	if err != nil {
-		return err
-	}
-
-	err = performHandshakeAsSlave(conn, replInfo)
+	err = performHandshakeAsSlave(replInfo)
+	// while incomplete, we close the connection
+	replInfo.masterClient.Close()
 	return err
 }
 
-func performHandshakeAsSlave(conn net.Conn, replInfo *ReplicationInfo) error {
-	brw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
-	if err := reqExpectingSimpleStringRes(brw, []string{"PING"}, "PONG"); err != nil {
+func performHandshakeAsSlave(replInfo *ReplicationInfo) error {
+	mc := replInfo.masterClient
+	if res, err := mc.Do([]string{"PING"}); err != nil {
 		return err
+	} else if !resp.Is(res, resp.RESPSimpleString{Value: "PONG"}) {
+		return errors.New("expected PONG, got " + res.SerializeRESP())
 	}
 	port, _ := config.Get("port")
-	if err := reqExpectingSimpleStringRes(brw, []string{"REPLCONF", "listening-port", port}, "OK"); err != nil {
+	if res, err := mc.Do([]string{"REPLCONF", "listening-port", port}); err != nil {
 		return err
+	} else if !resp.Is(res, resp.RESPSimpleString{Value: "OK"}) {
+		return errors.New("expected OK, got " + res.SerializeRESP())
 	}
-	if err := reqExpectingSimpleStringRes(brw, []string{"REPLCONF", "capa", "psync2"}, "OK"); err != nil {
+	if res, err := mc.Do([]string{"REPLCONF", "capa", "psync2"}); err != nil {
 		return err
+	} else if !resp.Is(res, resp.RESPSimpleString{Value: "OK"}) {
+		return errors.New("expected OK, got " + res.SerializeRESP())
 	}
-	return nil
-}
-
-func reqExpectingSimpleStringRes(brw *bufio.ReadWriter, req []string, expectedRes string) error {
-	reqArrayValue := make([]resp.RESP, 0, len(req))
-	for _, r := range req {
-		reqArrayValue = append(reqArrayValue, &resp.RESPBulkString{Value: r})
-	}
-	reqBytes := []byte(resp.RESPArray{Value: reqArrayValue}.SerializeRESP())
-	if _, err := brw.Write(reqBytes); err != nil {
-		return err
-	}
-	if err := brw.Flush(); err != nil {
-		return err
-	}
-	// Receive PONG
-	res, err := brw.ReadSlice('\n')
+	res, err := mc.Do([]string{"PSYNC", replInfo.MasterReplid, strconv.Itoa(replInfo.MasterReplOffset)})
 	if err != nil {
 		return err
 	}
-	expectedResResp := resp.RESPSimpleString{Value: expectedRes}.SerializeRESP()
-	if string(res) != expectedResResp {
-		return fmt.Errorf("expected %s, received %s", expectedResResp, string(res))
+	rss, ok := res.(*resp.RESPSimpleString)
+	if !ok {
+		return errors.New("expected simple string, got " + res.SerializeRESP())
+	}
+	sa := strings.Split(rss.Value, " ")
+	if !(len(sa) == 3 && sa[0] == "FULLRESYNC" && len(sa[1]) == 40 && sa[2] == "0") {
+		return errors.New("invalid response: " + rss.Value)
 	}
 	return nil
 }

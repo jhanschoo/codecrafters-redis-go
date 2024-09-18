@@ -4,17 +4,22 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/codecrafters-io/redis-starter-go/app/client"
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 )
 
 type ReplicationInfo struct {
 	Role             string `json:"role"`
-	Replicaof        string `json:"-"`
 	MasterReplid     string `json:"master_replid"`
 	MasterReplOffset int    `json:"master_repl_offset"`
+
+	masterClient *client.Client `json:"-"`
 }
 
-var replicationInfo ReplicationInfo
+var replicationInfo = ReplicationInfo{
+	MasterReplid:     "?",
+	MasterReplOffset: -1,
+}
 
 func InitializeReplication() {
 	replicaof, _ := config.Get("replicaof")
@@ -23,8 +28,7 @@ func InitializeReplication() {
 	case "":
 		err = initializeMaster(&replicationInfo)
 	default:
-		replicationInfo.Replicaof = replicaof
-		err = InitializeSlave(&replicationInfo)
+		err = InitializeSlave(&replicationInfo, replicaof)
 	}
 	if err != nil {
 		log.Fatalf("Failed to initialize replication: %v", err)

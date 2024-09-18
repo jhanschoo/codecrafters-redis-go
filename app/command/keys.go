@@ -10,9 +10,5 @@ func handleKeys(db int64, sa []string) resp.RESP {
 		return &resp.RESPSimpleError{Value: `Unsupported input: only KEYS "*" is supported for the KEYS command`}
 	}
 	keys := state.Keys(db)
-	ra := make([]resp.RESP, 0, len(keys))
-	for _, key := range keys {
-		ra = append(ra, &resp.RESPBulkString{Value: key})
-	}
-	return &resp.RESPArray{Value: ra}
+	return resp.ParseStringSlice(keys)
 }

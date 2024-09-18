@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"io"
 	"log"
 	"net"
@@ -12,7 +11,7 @@ import (
 
 func handleConn(c net.Conn) error {
 	var db int64 = 0
-	r := respreader.NewBufReader(bufio.NewReader(c))
+	r := respreader.NewBufReader(c)
 
 	for {
 		req, err := r.ReadRESP()

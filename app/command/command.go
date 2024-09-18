@@ -13,6 +13,7 @@ var commandHandlers = map[string]func(db int64, sa []string) resp.RESP{
 	"KEYS":     handleKeys,
 	"INFO":     handleInfo,
 	"REPLCONF": handleReplconf,
+	"PSYNC":    handlePsync,
 }
 
 func Handle(db int64, sa []string) resp.RESP {

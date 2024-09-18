@@ -8,7 +8,8 @@ import (
 
 func initializeMaster(replInfo *ReplicationInfo) error {
 	log.Println("initializeMaster: started")
-	replicationInfo.Role = "master"
-	replicationInfo.MasterReplid = utility.RandomAlphaNumericString(40)
+	replInfo.Role = "master"
+	replInfo.MasterReplid = utility.RandomAlphaNumericString(40)
+	replInfo.MasterReplOffset = 0
 	return nil
 }
