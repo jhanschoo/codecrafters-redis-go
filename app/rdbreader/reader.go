@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"encoding/binary"
 	"errors"
-	"log"
 	"strconv"
 	"time"
 )
@@ -65,7 +64,6 @@ func ReadRDB(br *bufio.Reader) (map[int64]map[string]ValueData, error) {
 }
 
 func (st *readerState) readMagicString() (*readerState, error) {
-	log.Println("readMagicString")
 	magicCandidate := make([]byte, len(version11MagicString))
 	n, err := st.br.Read(magicCandidate)
 	if err != nil {
@@ -77,12 +75,10 @@ func (st *readerState) readMagicString() (*readerState, error) {
 	if string(magicCandidate) != version11MagicString {
 		return nil, ErrorUnsupportedRDBVersion
 	}
-	log.Printf("readMagicString: success, read magic string: %s\n", version11MagicString)
 	return st, nil
 }
 
 func (st *readerState) readAuxField() (*readerState, error) {
-	log.Println("readAuxField")
 	key, err := readString(st.br)
 	if err != nil {
 		return nil, err
@@ -92,12 +88,10 @@ func (st *readerState) readAuxField() (*readerState, error) {
 		return nil, err
 	}
 	st.aux[key] = value
-	log.Printf("readAuxField: success, read key: %s, value: %s\n", key, value)
 	return st, nil
 }
 
 func (st *readerState) readResizeDb() (*readerState, error) {
-	log.Println("readResizeDb")
 	if st.entriesLeft > 0 || st.expiryFieldsLeft > 0 {
 		return nil, ErrorIncorrectDbSizes
 	}
@@ -111,12 +105,10 @@ func (st *readerState) readResizeDb() (*readerState, error) {
 		return nil, err
 	}
 	st.dbs[st.currentDb] = make(map[string]ValueData, st.entriesLeft)
-	log.Printf("readResizeDb: success, expecting db %d to contain %d entries and %d expiry fields\n", st.currentDb, st.entriesLeft, st.expiryFieldsLeft)
 	return st, nil
 }
 
 func (st *readerState) readExpireTime() (*readerState, error) {
-	log.Println("readExpireTime")
 	if st.expiryFieldsLeft == 0 {
 		return nil, ErrorIncorrectDbSizes
 	}
@@ -126,12 +118,10 @@ func (st *readerState) readExpireTime() (*readerState, error) {
 		return nil, err
 	}
 	st.currentKvExpiry = time.Unix(int64(binary.LittleEndian.Uint32(bs)), 0)
-	log.Printf("readExpireTime: success, expecting next entry to have expiry time: %s\n", st.currentKvExpiry)
 	return st, nil
 }
 
 func (st *readerState) readExpireTimeMs() (*readerState, error) {
-	log.Println("readExpireTimeMs")
 	if st.expiryFieldsLeft == 0 {
 		return nil, ErrorIncorrectDbSizes
 	}
@@ -144,12 +134,10 @@ func (st *readerState) readExpireTimeMs() (*readerState, error) {
 	sec := int64(ms / millisecondsInSecond)
 	nsec := int64((ms % millisecondsInSecond) * nanosecondsInMillisecond)
 	st.currentKvExpiry = time.Unix(sec, nsec)
-	log.Printf("readExpireTimeMs: success, expecting next entry to have expiry time: %s\n", st.currentKvExpiry)
 	return st, nil
 }
 
 func (st *readerState) readSelectDb() (*readerState, error) {
-	log.Println("readSelectDb")
 	if st.entriesLeft > 0 || st.expiryFieldsLeft > 0 {
 		return nil, ErrorIncorrectDbSizes
 	}
@@ -159,24 +147,20 @@ func (st *readerState) readSelectDb() (*readerState, error) {
 	}
 	st.dbs[db] = make(map[string]ValueData)
 	st.currentDb = db
-	log.Printf("readSelectDb: success, selected db %d\n", db)
 	return st, nil
 }
 
 func (st *readerState) readEof() (*readerState, error) {
-	log.Println("readEof")
 	if st.entriesLeft > 0 || st.expiryFieldsLeft > 0 {
 		return nil, ErrorIncorrectDbSizes
 	}
 	if !st.currentKvExpiry.IsZero() {
 		return nil, ErrorDanglingExpiry
 	}
-	log.Println("readEof: success, read EOF")
 	return st, nil
 }
 
 func (st *readerState) readKv(typeByte byte) (*readerState, error) {
-	log.Println("readKv")
 	if st.entriesLeft == 0 {
 		return nil, ErrorIncorrectDbSizes
 	}
@@ -192,7 +176,6 @@ func (st *readerState) readKv(typeByte byte) (*readerState, error) {
 			return nil, err
 		}
 		st.dbs[st.currentDb][k] = ValueData{v, st.currentKvExpiry}
-		log.Printf("readKv: success, read key: %s, value: %s, with expiry %s\n", k, v, st.currentKvExpiry)
 	default:
 		return nil, ErrorUnsupportedValueType
 	}

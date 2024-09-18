@@ -57,7 +57,6 @@ func initializeFromRDB(br *bufio.Reader) {
 	for db, data := range dbs {
 		state[db] = &stateShard{data: make(map[string]StateValue)}
 		for k, v := range data {
-			log.Printf("db=%d, key=%s, value=%s, expiresAt=%v\n", db, k, v.Value, v.ExpiresAt)
 			state[db].data[k] = NewStateValue(v.Value, v.ExpiresAt)
 		}
 	}
