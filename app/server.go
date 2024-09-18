@@ -14,11 +14,7 @@ func main() {
 	log.Println("Logs from your program will appear here!")
 
 	config.InitializeConfig()
-	port, ok := config.Get("port")
-	if !ok {
-		log.Println("Failed to read port from config")
-		os.Exit(1)
-	}
+	port, _ := config.Get("port")
 
 	state.InitializeState()
 

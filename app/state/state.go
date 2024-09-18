@@ -14,6 +14,8 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/rdbreader"
 )
 
+var initialized = false
+
 type StateValue struct {
 	string
 	expiresAt time.Time
@@ -24,23 +26,28 @@ func NewStateValue(value string, expiresAt time.Time) StateValue {
 }
 
 func InitializeState() {
-	dir, dirOk := config.Get("dir")
-	dbfilename, dbfilenameOk := config.Get("dbfilename")
-	if dirOk && dbfilenameOk {
-		filePath := path.Join(dir, dbfilename)
-		f, err := os.Open(path.Join(dir, dbfilename))
-		if errors.Is(err, fs.ErrNotExist) {
-			log.Printf("RDB file %s does not exist, skipping initialization from RDB file", filePath)
-		} else {
-			// defer is OK since we don'b care about handling the error here
-			defer f.Close()
-			if err != nil {
-				log.Fatalf("failed to open RDB file: %v", err)
-			}
-			br := bufio.NewReader(f)
-			initializeFromRDB(br)
-			return
+	if initialized {
+		log.Fatal("state already initialized")
+	}
+	// Set initialized to true to prevent reinitialization
+	//   we may set here instead of at the end of the function
+	//   as we expect initialization failure to be fatal.
+	initialized = true
+	dir, _ := config.Get("dir")
+	dbfilename, _ := config.Get("dbfilename")
+	filePath := path.Join(dir, dbfilename)
+	f, err := os.Open(path.Join(dir, dbfilename))
+	if errors.Is(err, fs.ErrNotExist) {
+		log.Printf("RDB file %s does not exist, skipping initialization from RDB file", filePath)
+	} else {
+		// defer is OK since we don'b care about handling the error here
+		defer f.Close()
+		if err != nil {
+			log.Fatalf("failed to open RDB file: %v", err)
 		}
+		br := bufio.NewReader(f)
+		initializeFromRDB(br)
+		return
 	}
 	log.Println("No RDB file specified or file does not exist, initializing empty state")
 	state = map[int64]*stateShard{
