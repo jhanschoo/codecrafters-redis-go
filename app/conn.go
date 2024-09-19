@@ -24,8 +24,11 @@ func handleConn(c net.Conn) error {
 			return c.Close()
 		}
 		log.Println("handleConn: received request", strconv.Quote(req.SerializeRESP()))
-		res := handleRequest(db, req)
+		res, next := handleRequest(db, req)
 		log.Println("handleConn: writing response", strconv.Quote(res.SerializeRESP()))
 		c.Write([]byte(res.SerializeRESP()))
+		if next != nil {
+			(*next)(c)
+		}
 	}
 }
