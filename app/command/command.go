@@ -18,6 +18,7 @@ func init() {
 	defaultHandler.registerBasic(infoCommand, handleInfo)
 	defaultHandler.registerStandard(replconfCommand, handleReplconf)
 	defaultHandler.register(psyncCommand, handlePsync)
+	defaultHandler.registerStandard(waitCommand, handleWait)
 }
 
 type Context struct {
