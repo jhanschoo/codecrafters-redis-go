@@ -9,6 +9,7 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/client"
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
+	"github.com/codecrafters-io/redis-starter-go/app/respreader"
 )
 
 func initializeSlave(replicaof string) error {
@@ -54,5 +55,11 @@ func performHandshakeAsSlave() error {
 	if !(len(sa) == 3 && sa[0] == "FULLRESYNC" && len(sa[1]) == 40 && sa[2] == "0") {
 		return errors.New("invalid response: " + rss.Value)
 	}
+
+	// read RDB. dummy implementation
+	rdbr := respreader.NewBufBulkStringReader(mc.Reader)
+	rdbr.ReadRESPUnterminated()
+
+	// conn is now ready to read commands from master
 	return nil
 }

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"log"
 	"strconv"
 	"strings"
 
@@ -10,7 +11,7 @@ import (
 
 var setCommand = "SET"
 
-func handleSet(sa []string, db int64) (resp.RESP, bool, error) {
+func handleSet(sa []string, ctx Context) (resp.RESP, error) {
 	var (
 		key   string
 		value string
@@ -24,17 +25,21 @@ func handleSet(sa []string, db int64) (resp.RESP, bool, error) {
 		px = -1
 	case 5:
 		if strings.ToUpper(sa[3]) != "PX" {
-			return &resp.RESPSimpleError{Value: "Invalid input: expected PX as 4th element"}, false, nil
+			return &resp.RESPSimpleError{Value: "Invalid input: expected PX as 4th element"}, nil
 		}
 		key = sa[1]
 		value = sa[2]
 		px, err = strconv.ParseInt(sa[4], 10, 64)
 		if err != nil {
-			return &resp.RESPSimpleError{Value: "Invalid input: expected integer as 5th element"}, false, nil
+			return &resp.RESPSimpleError{Value: "Invalid input: expected integer as 5th element"}, nil
 		}
 	default:
-		return &resp.RESPSimpleError{Value: "Invalid input: expected 3 or 5-element array"}, false, nil
+		return &resp.RESPSimpleError{Value: "Invalid input: expected 3 or 5-element array"}, nil
 	}
-	state.Set(db, key, value, px)
-	return &resp.RESPSimpleString{Value: "OK"}, true, nil
+	ctx.ExecuteAndWriteToSlaves(func() error {
+		log.Printf("SET %s %s", key, value)
+		state.Set(ctx.Db, key, value, px)
+		return nil
+	}, sa)
+	return &resp.RESPSimpleString{Value: "OK"}, nil
 }

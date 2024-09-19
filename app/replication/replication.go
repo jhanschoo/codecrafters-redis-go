@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/codecrafters-io/redis-starter-go/app/client"
 	"github.com/codecrafters-io/redis-starter-go/app/config"
@@ -15,19 +17,16 @@ type ReplicationInfo struct {
 	MasterReplid     string `json:"master_replid"`
 	MasterReplOffset int    `json:"master_repl_offset"`
 
-	masterClient *client.Client        `json:"-"`
-	listeners    []replicationListener `json:"-"`
-}
-
-type replicationListener struct {
-	io.Writer
-	l *sync.Mutex
+	masterClient *client.Client `json:"-"`
+	listeners    []io.Writer    `json:"-"`
+	listenersMu  *sync.Mutex    `json:"-"`
 }
 
 var replicationInfo = ReplicationInfo{
 	MasterReplid:     "?",
 	MasterReplOffset: -1,
-	listeners:        make([]replicationListener, 0),
+	listeners:        make([]io.Writer, 0),
+	listenersMu:      &sync.Mutex{},
 }
 
 func InitializeReplication() {
@@ -46,6 +45,10 @@ func InitializeReplication() {
 
 func GetReplicationInfo() ReplicationInfo {
 	return replicationInfo
+}
+
+func GetMasterConn() net.Conn {
+	return replicationInfo.masterClient.Conn
 }
 
 func GetReplicationInfoAsJson() ([]byte, error) {
@@ -67,18 +70,31 @@ func GetReplicationInfoAsMap() (map[string]interface{}, error) {
 	return m, nil
 }
 
+// Contract: once a writer is registered, no other part of the code should write to it except indirectly through this package.
 func RegisterListener(w io.Writer) {
-	replicationInfo.listeners = append(replicationInfo.listeners, replicationListener{w, &sync.Mutex{}})
+	replicationInfo.listeners = append(replicationInfo.listeners, w)
 }
 
-func WriteToAllListeners(p []byte) {
+func ExecuteAndWriteToListenersAtomically(f func() error, bs []byte) {
+	replicationInfo.listenersMu.Lock()
+	l := len(replicationInfo.listeners)
+	if err := f(); err != nil || l == 0 {
+		replicationInfo.listenersMu.Unlock()
+		return
+	}
+	var counter atomic.Int64
+	counter.Store(int64(l))
+	listeners := make([]io.Writer, l)
+	copy(listeners, replicationInfo.listeners)
 	for _, w := range replicationInfo.listeners {
-		writeToListener(p, w)
+		go writeToListener(bs, w, &counter)
 	}
 }
 
-func writeToListener(p []byte, w replicationListener) {
-	w.l.Lock()
+func writeToListener(p []byte, w io.Writer, counter *atomic.Int64) {
 	w.Write(p)
-	w.l.Unlock()
+	i := counter.Add(-1)
+	if i == 0 {
+		replicationInfo.listenersMu.Unlock()
+	}
 }

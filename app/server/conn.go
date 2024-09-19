@@ -13,7 +13,7 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/respreader"
 )
 
-func handleConn(c net.Conn) error {
+func HandleConn(c net.Conn) error {
 	var db int64 = 0
 	r := respreader.NewBufReader(bufio.NewReader(c))
 	ch := command.GetDefaultHandler()
@@ -28,8 +28,8 @@ func handleConn(c net.Conn) error {
 			}
 			return c.Close()
 		}
-		log.Println("handleConn: received request", strconv.Quote(req.SerializeRESP()), "delegating to handleRequest")
-		err = ch.Do(req, command.Context{Conn: c, Db: db, WriteToSlaves: writeToSlaves})
+		log.Println("handleConn: received request", strconv.Quote(req.SerializeRESP()))
+		err = ch.Do(req, command.Context{Conn: c, Db: db, ExecuteAndWriteToSlaves: executeAndWriteToSlaves})
 		if err != nil {
 			log.Println("handleConn: error handling request", err)
 			return c.Close()
@@ -37,8 +37,7 @@ func handleConn(c net.Conn) error {
 	}
 }
 
-func writeToSlaves(sa []string) error {
+func executeAndWriteToSlaves(f func() error, sa []string) {
 	ba := []byte(resp.EncodeStringSlice(sa).SerializeRESP())
-	replication.WriteToAllListeners(ba)
-	return nil
+	replication.ExecuteAndWriteToListenersAtomically(f, ba)
 }

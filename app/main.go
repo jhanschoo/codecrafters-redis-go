@@ -15,5 +15,10 @@ func main() {
 
 	daemon.LaunchDaemons()
 
+	ri := replication.GetReplicationInfo()
+	if ri.Role == "slave" {
+		go server.HandleConn(replication.GetMasterConn())
+	}
+	// at the time of writing, this code below allows mutation on a replica
 	server.Serve()
 }

@@ -3,7 +3,6 @@ package client
 import (
 	"bufio"
 	"errors"
-	"io"
 	"net"
 	"strings"
 
@@ -12,7 +11,7 @@ import (
 )
 
 type Client struct {
-	io.Writer
+	net.Conn
 	*bufio.Reader
 	RESPReader respreader.Reader
 }
@@ -42,17 +41,10 @@ func NewClient(serverAddr string) (*Client, error) {
 	br := bufio.NewReader(conn)
 	rr := respreader.NewBufReader(br)
 	return &Client{
-		Writer:     conn,
+		Conn:       conn,
 		Reader:     br,
 		RESPReader: rr,
 	}, nil
-}
-
-func (c *Client) Close() error {
-	if closer, ok := c.Writer.(io.Closer); ok {
-		return closer.Close()
-	}
-	return nil
 }
 
 func (c *Client) Do(req []string) (resp.RESP, error) {

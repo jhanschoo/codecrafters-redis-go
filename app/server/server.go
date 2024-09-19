@@ -24,6 +24,6 @@ func Serve() {
 			log.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		go handleConn(c)
+		go HandleConn(c)
 	}
 }

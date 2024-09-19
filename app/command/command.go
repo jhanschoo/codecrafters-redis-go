@@ -11,7 +11,7 @@ import (
 func init() {
 	defaultHandler.registerBasic(pingCommand, handlePing)
 	defaultHandler.registerBasic(echoCommand, handleEcho)
-	defaultHandler.registerBasicMutating(setCommand, handleSet)
+	defaultHandler.registerStandard(setCommand, handleSet)
 	defaultHandler.registerBasic(getCommand, handleGet)
 	defaultHandler.registerBasic(configCommand, handleConfigCommands)
 	defaultHandler.registerBasic(keysCommand, handleKeys)
@@ -21,9 +21,9 @@ func init() {
 }
 
 type Context struct {
-	Conn          net.Conn
-	Db            int64
-	WriteToSlaves func([]string) error
+	Conn                    net.Conn
+	Db                      int64
+	ExecuteAndWriteToSlaves func(func() error, []string)
 }
 
 type Handler interface {
@@ -31,28 +31,17 @@ type Handler interface {
 }
 
 func (ch *CommandHandler) registerBasic(com string, do func(sa []string, db int64) (resp.RESP, error)) {
-	ch.registerStandard(com, func(sa []string, ctx Context) (resp.RESP, bool, error) {
+	ch.registerStandard(com, func(sa []string, ctx Context) (resp.RESP, error) {
 		res, err := do(sa, ctx.Db)
-		return res, false, err
+		return res, err
 	})
 }
 
-func (ch *CommandHandler) registerBasicMutating(com string, do func(sa []string, db int64) (resp.RESP, bool, error)) {
-	ch.registerStandard(com, func(sa []string, ctx Context) (resp.RESP, bool, error) {
-		return do(sa, ctx.Db)
-	})
-}
-
-func (ch *CommandHandler) registerStandard(com string, do func(sa []string, ctx Context) (resp.RESP, bool, error)) {
+func (ch *CommandHandler) registerStandard(com string, do func(sa []string, ctx Context) (resp.RESP, error)) {
 	ch.register(com, func(sa []string, ctx Context) error {
-		res, shouldPropagate, err := do(sa, ctx)
+		res, err := do(sa, ctx)
 		if err != nil {
 			return err
-		}
-		if shouldPropagate {
-			if err := ctx.WriteToSlaves(sa); err != nil {
-				return err
-			}
 		}
 		_, err = ctx.Conn.Write([]byte(res.SerializeRESP()))
 		return err
