@@ -6,6 +6,9 @@ var pingCommand = "PING"
 
 var pong = &resp.RESPSimpleString{Value: "PONG"}
 
-func handlePing(sa []string, _ int64) (resp.RESP, error) {
+func handlePing(sa []string, ctx Context) (resp.RESP, error) {
+	if ctx.IsReplica && ctx.IsPrivileged {
+		return nil, nil
+	}
 	return pong, nil
 }

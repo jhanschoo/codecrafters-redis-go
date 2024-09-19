@@ -9,14 +9,14 @@ import (
 )
 
 func init() {
-	defaultHandler.registerBasic(pingCommand, handlePing)
+	defaultHandler.registerStandard(pingCommand, handlePing)
 	defaultHandler.registerBasic(echoCommand, handleEcho)
 	defaultHandler.registerStandard(setCommand, handleSet)
 	defaultHandler.registerBasic(getCommand, handleGet)
 	defaultHandler.registerBasic(configCommand, handleConfigCommands)
 	defaultHandler.registerBasic(keysCommand, handleKeys)
 	defaultHandler.registerBasic(infoCommand, handleInfo)
-	defaultHandler.registerBasic(replconfCommand, handleReplconf)
+	defaultHandler.registerStandard(replconfCommand, handleReplconf)
 	defaultHandler.register(psyncCommand, handlePsync)
 }
 
@@ -25,6 +25,7 @@ type Context struct {
 	Db                      int64
 	IsReplica               bool
 	IsPrivileged            bool
+	BytesProcessed          int64
 	ExecuteAndWriteToSlaves func(func() error, []string)
 }
 

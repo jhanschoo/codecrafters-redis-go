@@ -14,8 +14,11 @@ import (
 )
 
 func HandleConn(c net.Conn, br *bufio.Reader, isPrivileged bool) error {
-	var db int64 = 0
-	isReplica := replication.GetReplicationInfo().Role == "slave"
+	var (
+		db             int64 = 0
+		isReplica            = replication.GetReplicationInfo().Role == "slave"
+		bytesProcessed int64 = 0
+	)
 	if isReplica && isPrivileged {
 		log.Println("listening to master as a replica")
 	}
@@ -24,6 +27,14 @@ func HandleConn(c net.Conn, br *bufio.Reader, isPrivileged bool) error {
 	}
 	r := respreader.NewBufReader(br)
 	ch := command.GetDefaultHandler()
+	ctx := command.Context{
+		Conn:                    c,
+		Db:                      db,
+		IsReplica:               isReplica,
+		IsPrivileged:            isPrivileged,
+		BytesProcessed:          bytesProcessed,
+		ExecuteAndWriteToSlaves: nil,
+	}
 
 	for {
 		req, err := r.ReadRESP()
@@ -36,26 +47,17 @@ func HandleConn(c net.Conn, br *bufio.Reader, isPrivileged bool) error {
 			return c.Close()
 		}
 		log.Println("handleConn: received request", strconv.Quote(req.SerializeRESP()))
-		ctx := command.Context{
-			Conn:                    c,
-			Db:                      db,
-			IsReplica:               isReplica,
-			IsPrivileged:            isPrivileged,
-			ExecuteAndWriteToSlaves: executeAndWriteToSlavesReplica,
-		}
 		if !isReplica {
 			ctx.ExecuteAndWriteToSlaves = executeAndWriteToSlaves
 		}
 		err = ch.Do(req, ctx)
+		// inefficient, but easier than to track bytes read from the source
+		ctx.BytesProcessed += int64(len(req.SerializeRESP()))
 		if err != nil {
 			log.Println("handleConn: error handling request", err)
 			return c.Close()
 		}
 	}
-}
-
-func executeAndWriteToSlavesReplica(f func() error, _ []string) {
-	f()
 }
 
 func executeAndWriteToSlaves(f func() error, sa []string) {
