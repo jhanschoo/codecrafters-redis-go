@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"log"
@@ -6,21 +6,10 @@ import (
 	"os"
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
-	"github.com/codecrafters-io/redis-starter-go/app/daemon"
-	"github.com/codecrafters-io/redis-starter-go/app/replication"
-	"github.com/codecrafters-io/redis-starter-go/app/state"
 )
 
-func main() {
-	log.Println("Starting server")
-
-	config.InitializeConfig()
+func Serve() {
 	port, _ := config.Get("port")
-	replication.InitializeReplication()
-
-	state.InitializeState()
-
-	daemon.InitializeDaemons()
 
 	l, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
@@ -37,5 +26,4 @@ func main() {
 		}
 		go handleConn(c)
 	}
-
 }

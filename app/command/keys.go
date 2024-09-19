@@ -5,10 +5,12 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/state"
 )
 
-func handleKeys(db int64, sa []string) resp.RESP {
+var keysCommand = "KEYS"
+
+func handleKeys(sa []string, db int64) (resp.RESP, error) {
 	if len(sa) != 2 || sa[1] != "*" {
-		return &resp.RESPSimpleError{Value: `Unsupported input: only KEYS "*" is supported for the KEYS command`}
+		return &resp.RESPSimpleError{Value: `Unsupported input: only KEYS "*" is supported for the KEYS command`}, nil
 	}
 	keys := state.Keys(db)
-	return resp.ParseStringSlice(keys)
+	return resp.EncodeStringSlice(keys), nil
 }

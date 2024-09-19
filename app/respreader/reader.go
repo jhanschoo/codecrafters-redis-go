@@ -4,7 +4,6 @@ package respreader
 import (
 	"bufio"
 	"errors"
-	"io"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
@@ -29,8 +28,8 @@ func (e *shouldNotRestartError) Unwrap() error {
 	return e.error
 }
 
-func NewBufReader(is io.Reader) Reader {
-	r := newInternalBufPayloadReader(bufio.NewReader(is))
+func NewBufReader(is *bufio.Reader) Reader {
+	r := newInternalBufPayloadReader(is)
 	r.isInternal = false
 	return r
 }

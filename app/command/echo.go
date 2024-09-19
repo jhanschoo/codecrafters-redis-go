@@ -2,9 +2,11 @@ package command
 
 import "github.com/codecrafters-io/redis-starter-go/app/resp"
 
-func handleEcho(_ int64, sa []string) resp.RESP {
+var echoCommand = "ECHO"
+
+func handleEcho(sa []string, _ int64) (resp.RESP, error) {
 	if len(sa) != 2 {
-		return &resp.RESPSimpleError{Value: "Invalid input: expected 2-element array"}
+		return &resp.RESPSimpleError{Value: "Invalid input: expected 2-element array"}, nil
 	}
-	return &resp.RESPBulkString{Value: sa[1]}
+	return &resp.RESPBulkString{Value: sa[1]}, nil
 }

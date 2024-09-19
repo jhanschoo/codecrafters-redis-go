@@ -8,16 +8,18 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/utility"
 )
 
-func handleInfo(_ int64, sa []string) resp.RESP {
+var infoCommand = "INFO"
+
+func handleInfo(sa []string, _ int64) (resp.RESP, error) {
 	if len(sa) != 2 || sa[1] != "replication" {
-		return &resp.RESPSimpleError{Value: `Unsupported input: only INFO replication is supported for the INFO command`}
+		return &resp.RESPSimpleError{Value: `Unsupported input: only INFO replication is supported for the INFO command`}, nil
 	}
 
 	replicationInfo, err := replication.GetReplicationInfoAsMap()
 	if err != nil {
-		return &resp.RESPSimpleError{Value: fmt.Sprintf("Error getting replication info: %v", err)}
+		return &resp.RESPSimpleError{Value: fmt.Sprintf("Error getting replication info: %v", err)}, nil
 	}
 	serializedReplicationInfo := utility.SerializeInfo(replicationInfo)
 
-	return &resp.RESPBulkString{Value: serializedReplicationInfo}
+	return &resp.RESPBulkString{Value: serializedReplicationInfo}, nil
 }

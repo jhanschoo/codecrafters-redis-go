@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"errors"
 	"io"
 	"net"
@@ -12,7 +13,12 @@ import (
 
 type Client struct {
 	io.Writer
-	respreader.Reader
+	*bufio.Reader
+	RESPReader respreader.Reader
+}
+
+func (c *Client) ReadRESP() (resp.RESP, error) {
+	return c.RESPReader.ReadRESP()
 }
 
 func NewReplicaClient(replicaof string) (*Client, error) {
@@ -33,10 +39,12 @@ func NewClient(serverAddr string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	rr := respreader.NewBufReader(conn)
+	br := bufio.NewReader(conn)
+	rr := respreader.NewBufReader(br)
 	return &Client{
-		Writer: conn,
-		Reader: rr,
+		Writer:     conn,
+		Reader:     br,
+		RESPReader: rr,
 	}, nil
 }
 
@@ -48,7 +56,7 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) Do(req []string) (resp.RESP, error) {
-	if _, err := c.Write([]byte(resp.ParseStringSlice(req).SerializeRESP())); err != nil {
+	if _, err := c.Write([]byte(resp.EncodeStringSlice(req).SerializeRESP())); err != nil {
 		return nil, err
 	}
 	return c.ReadRESP()

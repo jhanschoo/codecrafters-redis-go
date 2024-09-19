@@ -4,16 +4,12 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-func handleReplconf(_ int64, sa []string) resp.RESP {
+var replconfCommand = "REPLCONF"
+
+func handleReplconf(sa []string, _ int64) (resp.RESP, error) {
 	if len(sa) <= 2 {
-		return &resp.RESPSimpleError{Value: `Expected at least 2 arguments for REPLCONF`}
+		return &resp.RESPSimpleError{Value: `Expected at least 2 arguments for REPLCONF`}, nil
 	}
-	switch sa[1] {
-	case "listening-port":
-		return resp.RESPSimpleString{Value: "OK"}
-	case "capa":
-		return resp.RESPSimpleString{Value: "OK"}
-	default:
-		return &resp.RESPSimpleError{Value: `Unsupported REPLCONF command`}
-	}
+	// dummy implementation
+	return resp.RESPSimpleString{Value: "OK"}, nil
 }

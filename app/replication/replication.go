@@ -2,7 +2,9 @@ package replication
 
 import (
 	"encoding/json"
+	"io"
 	"log"
+	"sync"
 
 	"github.com/codecrafters-io/redis-starter-go/app/client"
 	"github.com/codecrafters-io/redis-starter-go/app/config"
@@ -13,12 +15,19 @@ type ReplicationInfo struct {
 	MasterReplid     string `json:"master_replid"`
 	MasterReplOffset int    `json:"master_repl_offset"`
 
-	masterClient *client.Client `json:"-"`
+	masterClient *client.Client        `json:"-"`
+	listeners    []replicationListener `json:"-"`
+}
+
+type replicationListener struct {
+	io.Writer
+	l *sync.Mutex
 }
 
 var replicationInfo = ReplicationInfo{
 	MasterReplid:     "?",
 	MasterReplOffset: -1,
+	listeners:        make([]replicationListener, 0),
 }
 
 func InitializeReplication() {
@@ -26,9 +35,9 @@ func InitializeReplication() {
 	var err error
 	switch replicaof {
 	case "":
-		err = initializeMaster(&replicationInfo)
+		err = initializeMaster()
 	default:
-		err = InitializeSlave(&replicationInfo, replicaof)
+		err = initializeSlave(replicaof)
 	}
 	if err != nil {
 		log.Fatalf("Failed to initialize replication: %v", err)
@@ -56,4 +65,20 @@ func GetReplicationInfoAsMap() (map[string]interface{}, error) {
 	}
 
 	return m, nil
+}
+
+func RegisterListener(w io.Writer) {
+	replicationInfo.listeners = append(replicationInfo.listeners, replicationListener{w, &sync.Mutex{}})
+}
+
+func WriteToAllListeners(p []byte) {
+	for _, w := range replicationInfo.listeners {
+		writeToListener(p, w)
+	}
+}
+
+func writeToListener(p []byte, w replicationListener) {
+	w.l.Lock()
+	w.Write(p)
+	w.l.Unlock()
 }

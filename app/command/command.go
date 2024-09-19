@@ -1,38 +1,106 @@
 package command
 
 import (
+	"errors"
 	"net"
+	"strings"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-type connHandler = *func(net.Conn)
-
-var commandHandlers = map[string]func(db int64, sa []string) (resp.RESP, connHandler){
-	"PING":     basic(handlePing),
-	"ECHO":     basic(handleEcho),
-	"SET":      basic(handleSet),
-	"GET":      basic(handleGet),
-	"CONFIG":   basic(handleConfigCommands),
-	"KEYS":     basic(handleKeys),
-	"INFO":     basic(handleInfo),
-	"REPLCONF": basic(handleReplconf),
-	"PSYNC":    handlePsync,
+func init() {
+	defaultHandler.registerBasic(pingCommand, handlePing)
+	defaultHandler.registerBasic(echoCommand, handleEcho)
+	defaultHandler.registerBasicMutating(setCommand, handleSet)
+	defaultHandler.registerBasic(getCommand, handleGet)
+	defaultHandler.registerBasic(configCommand, handleConfigCommands)
+	defaultHandler.registerBasic(keysCommand, handleKeys)
+	defaultHandler.registerBasic(infoCommand, handleInfo)
+	defaultHandler.registerBasic(replconfCommand, handleReplconf)
+	defaultHandler.register(psyncCommand, handlePsync)
 }
 
-func Handle(db int64, sa []string) (resp.RESP, connHandler) {
-	if len(sa) == 0 {
-		return &resp.RESPSimpleError{Value: "Invalid input: expected non-empty array of bulk strings"}, nil
+type Context struct {
+	Conn          net.Conn
+	Db            int64
+	WriteToSlaves func([]string) error
+}
+
+type Handler interface {
+	Do(com resp.RESP, ctx Context) error
+}
+
+func (ch *CommandHandler) registerBasic(com string, do func(sa []string, db int64) (resp.RESP, error)) {
+	ch.registerStandard(com, func(sa []string, ctx Context) (resp.RESP, bool, error) {
+		res, err := do(sa, ctx.Db)
+		return res, false, err
+	})
+}
+
+func (ch *CommandHandler) registerBasicMutating(com string, do func(sa []string, db int64) (resp.RESP, bool, error)) {
+	ch.registerStandard(com, func(sa []string, ctx Context) (resp.RESP, bool, error) {
+		return do(sa, ctx.Db)
+	})
+}
+
+func (ch *CommandHandler) registerStandard(com string, do func(sa []string, ctx Context) (resp.RESP, bool, error)) {
+	ch.register(com, func(sa []string, ctx Context) error {
+		res, shouldPropagate, err := do(sa, ctx)
+		if err != nil {
+			return err
+		}
+		if shouldPropagate {
+			if err := ctx.WriteToSlaves(sa); err != nil {
+				return err
+			}
+		}
+		_, err = ctx.Conn.Write([]byte(res.SerializeRESP()))
+		return err
+	})
+}
+
+type subhandler struct {
+	Command string
+	Do      func(sa []string, ctx Context) error
+}
+
+func (ch *CommandHandler) register(com string, do func(sa []string, ctx Context) error) {
+	ch.handlers[com] = subhandler{Command: com, Do: do}
+}
+
+var defaultHandler = CommandHandler{
+	handlers: make(map[string]subhandler),
+}
+
+func GetDefaultHandler() Handler {
+	return &defaultHandler
+}
+
+type CommandHandler struct {
+	handlers map[string]subhandler
+}
+
+func (h *CommandHandler) Do(com resp.RESP, ctx Context) error {
+	sa, ok := resp.DecodeStringSlice(com)
+	if !ok || len(sa) == 0 {
+		return errors.New("Invalid input: expected non-empty array of bulk strings")
 	}
-	handler, ok := commandHandlers[sa[0]]
+	sh, ok := h.handlers[strings.ToUpper(sa[0])]
 	if !ok {
-		return &resp.RESPSimpleError{Value: "Unsupported command " + sa[0]}, nil
+		return writeRESPError(ctx.Conn, errors.New("Unsupported command"))
 	}
-	return handler(db, sa)
+	return sh.Do(sa, ctx)
 }
 
-func basic(f func(int64, []string) resp.RESP) func(int64, []string) (resp.RESP, connHandler) {
-	return func(db int64, sa []string) (resp.RESP, connHandler) {
-		return f(db, sa), nil
+func writeRESP(c net.Conn, res resp.RESP) error {
+	_, err := c.Write([]byte(res.SerializeRESP()))
+	return err
+}
+
+func writeRESPError(c net.Conn, err error) error {
+	errMsg := err.Error()
+	if strings.ContainsAny(errMsg, "\r\n") {
+		return writeRESP(c, &resp.RESPBulkError{Value: errMsg})
 	}
+	return writeRESP(c, &resp.RESPSimpleError{Value: errMsg})
 }

@@ -2,8 +2,10 @@ package command
 
 import "github.com/codecrafters-io/redis-starter-go/app/resp"
 
+var pingCommand = "PING"
+
 var pong = &resp.RESPSimpleString{Value: "PONG"}
 
-func handlePing(_ int64, sa []string) resp.RESP {
-	return pong
+func handlePing(sa []string, _ int64) (resp.RESP, error) {
+	return pong, nil
 }

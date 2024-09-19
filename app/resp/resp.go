@@ -188,12 +188,27 @@ func (r RESPPush) SerializeRESP() string {
 	return sb.String()
 }
 
-func ParseStringSlice(sa []string) RESP {
+func EncodeStringSlice(sa []string) RESP {
 	av := make([]RESP, len(sa))
 	for i, s := range sa {
 		av[i] = &RESPBulkString{Value: s}
 	}
 	return &RESPArray{Value: av}
+}
+
+func DecodeStringSlice(r RESP) ([]string, bool) {
+	if ra, ok := r.(*RESPArray); ok {
+		sa := make([]string, len(ra.Value))
+		for i, v := range ra.Value {
+			if bs, ok := v.(*RESPBulkString); ok {
+				sa[i] = bs.Value
+			} else {
+				return nil, false
+			}
+		}
+		return sa, true
+	}
+	return nil, false
 }
 
 func Is(r1 RESP, r2 RESP) bool {

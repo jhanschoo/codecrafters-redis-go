@@ -8,7 +8,9 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/state"
 )
 
-func handleSet(db int64, sa []string) resp.RESP {
+var setCommand = "SET"
+
+func handleSet(sa []string, db int64) (resp.RESP, bool, error) {
 	var (
 		key   string
 		value string
@@ -22,17 +24,17 @@ func handleSet(db int64, sa []string) resp.RESP {
 		px = -1
 	case 5:
 		if strings.ToUpper(sa[3]) != "PX" {
-			return &resp.RESPSimpleError{Value: "Invalid input: expected PX as 4th element"}
+			return &resp.RESPSimpleError{Value: "Invalid input: expected PX as 4th element"}, false, nil
 		}
 		key = sa[1]
 		value = sa[2]
 		px, err = strconv.ParseInt(sa[4], 10, 64)
 		if err != nil {
-			return &resp.RESPSimpleError{Value: "Invalid input: expected integer as 5th element"}
+			return &resp.RESPSimpleError{Value: "Invalid input: expected integer as 5th element"}, false, nil
 		}
 	default:
-		return &resp.RESPSimpleError{Value: "Invalid input: expected 3 or 5-element array"}
+		return &resp.RESPSimpleError{Value: "Invalid input: expected 3 or 5-element array"}, false, nil
 	}
 	state.Set(db, key, value, px)
-	return &resp.RESPSimpleString{Value: "OK"}
+	return &resp.RESPSimpleString{Value: "OK"}, true, nil
 }

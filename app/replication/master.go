@@ -6,10 +6,10 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/utility"
 )
 
-func initializeMaster(replInfo *ReplicationInfo) error {
+func initializeMaster() error {
 	log.Println("initializeMaster: started")
-	replInfo.Role = "master"
-	replInfo.MasterReplid = utility.RandomAlphaNumericString(40)
-	replInfo.MasterReplOffset = 0
+	replicationInfo.Role = "master"
+	replicationInfo.MasterReplid = utility.RandomAlphaNumericString(40)
+	replicationInfo.MasterReplOffset = 0
 	return nil
 }

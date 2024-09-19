@@ -11,25 +11,21 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-func InitializeSlave(replInfo *ReplicationInfo, replicaof string) error {
+func initializeSlave(replicaof string) error {
 	log.Println("initializeSlave: started")
-	replInfo.Role = "slave"
+	replicationInfo.Role = "slave"
 
 	var err error
-	replInfo.masterClient, err = client.NewReplicaClient(replicaof)
+	replicationInfo.masterClient, err = client.NewReplicaClient(replicaof)
 	if err != nil {
-		replInfo.masterClient.Close()
-		return err
+		return replicationInfo.masterClient.Close()
 	}
-
-	err = performHandshakeAsSlave(replInfo)
-	// while incomplete, we close the connection
-	replInfo.masterClient.Close()
+	err = performHandshakeAsSlave()
 	return err
 }
 
-func performHandshakeAsSlave(replInfo *ReplicationInfo) error {
-	mc := replInfo.masterClient
+func performHandshakeAsSlave() error {
+	mc := replicationInfo.masterClient
 	if res, err := mc.Do([]string{"PING"}); err != nil {
 		return err
 	} else if !resp.Is(res, resp.RESPSimpleString{Value: "PONG"}) {
@@ -41,12 +37,12 @@ func performHandshakeAsSlave(replInfo *ReplicationInfo) error {
 	} else if !resp.Is(res, resp.RESPSimpleString{Value: "OK"}) {
 		return errors.New("expected OK, got " + res.SerializeRESP())
 	}
-	if res, err := mc.Do([]string{"REPLCONF", "capa", "psync2"}); err != nil {
+	if res, err := mc.Do([]string{"REPLCONF", "capa", "eof", "capa", "psync2"}); err != nil {
 		return err
 	} else if !resp.Is(res, resp.RESPSimpleString{Value: "OK"}) {
 		return errors.New("expected OK, got " + res.SerializeRESP())
 	}
-	res, err := mc.Do([]string{"PSYNC", replInfo.MasterReplid, strconv.Itoa(replInfo.MasterReplOffset)})
+	res, err := mc.Do([]string{"PSYNC", replicationInfo.MasterReplid, strconv.Itoa(replicationInfo.MasterReplOffset)})
 	if err != nil {
 		return err
 	}
