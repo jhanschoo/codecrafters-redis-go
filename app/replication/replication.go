@@ -70,6 +70,12 @@ func RegisterListener(w io.Writer) {
 	replicationInfo.listeners = append(replicationInfo.listeners, w)
 }
 
+func GetListenersCount() int {
+	replicationInfo.listenersMu.Lock()
+	defer replicationInfo.listenersMu.Unlock()
+	return len(replicationInfo.listeners)
+}
+
 func ExecuteAndWriteToListenersAtomically(f func() error, bs []byte) {
 	replicationInfo.listenersMu.Lock()
 	l := len(replicationInfo.listeners)

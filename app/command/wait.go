@@ -1,6 +1,7 @@
 package command
 
 import (
+	"github.com/codecrafters-io/redis-starter-go/app/replication"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
@@ -11,5 +12,5 @@ func handleWait(sa []string, ctx Context) (resp.RESP, error) {
 		return &resp.RESPSimpleError{Value: `Expected 3 arguments for WAIT`}, nil
 	}
 	// dummy implementation
-	return resp.RESPInteger{Value: 0}, nil
+	return resp.RESPInteger{Value: int64(replication.GetListenersCount())}, nil
 }
