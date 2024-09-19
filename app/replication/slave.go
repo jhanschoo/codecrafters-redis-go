@@ -17,16 +17,17 @@ func initializeSlave(replicaof string) error {
 	replicationInfo.Role = "slave"
 
 	var err error
-	replicationInfo.masterClient, err = client.NewReplicaClient(replicaof)
+	replicationInfo.MasterClient, err = client.NewReplicaClient(replicaof)
 	if err != nil {
-		return replicationInfo.masterClient.Close()
+		log.Println("initializeSlave: failed to create master client")
+		return replicationInfo.MasterClient.Close()
 	}
 	err = performHandshakeAsSlave()
 	return err
 }
 
 func performHandshakeAsSlave() error {
-	mc := replicationInfo.masterClient
+	mc := replicationInfo.MasterClient
 	if res, err := mc.Do([]string{"PING"}); err != nil {
 		return err
 	} else if !resp.Is(res, resp.RESPSimpleString{Value: "PONG"}) {
@@ -57,8 +58,18 @@ func performHandshakeAsSlave() error {
 	}
 
 	// read RDB. dummy implementation
+	if b, err := mc.ReadByte(); err != nil {
+		return err
+	} else if b != '$' {
+		return errors.New("expected '$', got " + string(b))
+	}
 	rdbr := respreader.NewBufBulkStringReader(mc.Reader)
-	rdbr.ReadRESPUnterminated()
+	_, err = rdbr.ReadRESPUnterminated()
+	if err != nil {
+		log.Println("performHandshakeAsSlave: error reading RDB", err)
+		return err
+	}
+	log.Println("performHandshakeAsSlave: received RDB")
 
 	// conn is now ready to read commands from master
 	return nil

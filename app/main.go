@@ -17,7 +17,8 @@ func main() {
 
 	ri := replication.GetReplicationInfo()
 	if ri.Role == "slave" {
-		go server.HandleConn(replication.GetMasterConn())
+		mc := ri.MasterClient
+		go server.HandleConn(mc.Conn, mc.Reader, true)
 	}
 	// at the time of writing, this code below allows mutation on a replica
 	server.Serve()

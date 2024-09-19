@@ -23,6 +23,8 @@ func init() {
 type Context struct {
 	Conn                    net.Conn
 	Db                      int64
+	IsReplica               bool
+	IsPrivileged            bool
 	ExecuteAndWriteToSlaves func(func() error, []string)
 }
 
@@ -42,6 +44,9 @@ func (ch *CommandHandler) registerStandard(com string, do func(sa []string, ctx 
 		res, err := do(sa, ctx)
 		if err != nil {
 			return err
+		}
+		if res == nil {
+			return nil
 		}
 		_, err = ctx.Conn.Write([]byte(res.SerializeRESP()))
 		return err
@@ -72,11 +77,11 @@ type CommandHandler struct {
 func (h *CommandHandler) Do(com resp.RESP, ctx Context) error {
 	sa, ok := resp.DecodeStringSlice(com)
 	if !ok || len(sa) == 0 {
-		return errors.New("Invalid input: expected non-empty array of bulk strings")
+		return errors.New("invalid input: expected non-empty array of bulk strings")
 	}
 	sh, ok := h.handlers[strings.ToUpper(sa[0])]
 	if !ok {
-		return writeRESPError(ctx.Conn, errors.New("Unsupported command"))
+		return writeRESPError(ctx.Conn, errors.New("unsupported command"))
 	}
 	return sh.Do(sa, ctx)
 }

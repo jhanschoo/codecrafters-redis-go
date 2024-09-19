@@ -1,7 +1,6 @@
 package command
 
 import (
-	"log"
 	"strconv"
 	"strings"
 
@@ -36,8 +35,14 @@ func handleSet(sa []string, ctx Context) (resp.RESP, error) {
 	default:
 		return &resp.RESPSimpleError{Value: "Invalid input: expected 3 or 5-element array"}, nil
 	}
+	if ctx.IsReplica {
+		if !ctx.IsPrivileged {
+			return &resp.RESPSimpleError{Value: "READONLY You can't write against a read only replica."}, nil
+		}
+		state.Set(ctx.Db, key, value, px)
+		return nil, nil
+	}
 	ctx.ExecuteAndWriteToSlaves(func() error {
-		log.Printf("SET %s %s", key, value)
 		state.Set(ctx.Db, key, value, px)
 		return nil
 	}, sa)

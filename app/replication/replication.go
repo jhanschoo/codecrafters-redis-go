@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"log"
-	"net"
 	"sync"
 	"sync/atomic"
 
@@ -13,13 +12,13 @@ import (
 )
 
 type ReplicationInfo struct {
-	Role             string `json:"role"`
-	MasterReplid     string `json:"master_replid"`
-	MasterReplOffset int    `json:"master_repl_offset"`
+	Role             string         `json:"role"`
+	MasterReplid     string         `json:"master_replid"`
+	MasterReplOffset int            `json:"master_repl_offset"`
+	MasterClient     *client.Client `json:"-"`
 
-	masterClient *client.Client `json:"-"`
-	listeners    []io.Writer    `json:"-"`
-	listenersMu  *sync.Mutex    `json:"-"`
+	listeners   []io.Writer `json:"-"`
+	listenersMu *sync.Mutex `json:"-"`
 }
 
 var replicationInfo = ReplicationInfo{
@@ -45,10 +44,6 @@ func InitializeReplication() {
 
 func GetReplicationInfo() ReplicationInfo {
 	return replicationInfo
-}
-
-func GetMasterConn() net.Conn {
-	return replicationInfo.masterClient.Conn
 }
 
 func GetReplicationInfoAsJson() ([]byte, error) {
