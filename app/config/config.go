@@ -6,6 +6,7 @@ import (
 )
 
 var initialized = false
+var keys []string
 
 var config = map[string]*string{
 	"dir":        flag.String("dir", ".", "directory to search for the RDB file"),
@@ -14,9 +15,24 @@ var config = map[string]*string{
 	"replicaof":  flag.String("replicaof", "", "replicaof host port"),
 }
 
-func Get(key string) (string, bool) {
+func Get(key string) string {
+	if !initialized {
+		log.Fatalln("config: not initialized")
+	}
 	s, a := config[key]
-	return *s, a
+	if !a {
+		log.Fatalf("config: key %s not found", key)
+	}
+	return *s
+}
+
+func Keys() []string {
+	if !initialized {
+		log.Fatalln("config: not initialized")
+	}
+	k := make([]string, len(keys))
+	copy(k, keys)
+	return k
 }
 
 func InitializeConfig() {
@@ -25,4 +41,8 @@ func InitializeConfig() {
 	}
 	flag.Parse()
 	initialized = true
+	keys = make([]string, 0, len(config))
+	for k := range config {
+		keys = append(keys, k)
+	}
 }

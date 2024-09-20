@@ -35,16 +35,14 @@ func handleSet(sa []string, ctx Context) (resp.RESP, error) {
 	default:
 		return &resp.RESPSimpleError{Value: "Invalid input: expected 3 or 5-element array"}, nil
 	}
-	if ctx.IsReplica {
-		if !ctx.IsPrivileged {
-			return &resp.RESPSimpleError{Value: "READONLY You can't write against a read only replica."}, nil
-		}
-		state.Set(ctx.Db, key, value, px)
-		return nil, nil
+	if ctx.IsReplica && !ctx.IsReplConn {
+		return &resp.RESPSimpleError{Value: "READONLY You can't write against a read only replica."}, nil
 	}
-	ctx.ExecuteAndWriteToSlaves(func() error {
-		state.Set(ctx.Db, key, value, px)
+	if err := state.ExecuteAndReplicateCommand(func() error {
+		state.Set(key, value, px)
 		return nil
-	}, sa)
-	return &resp.RESPSimpleString{Value: "OK"}, nil
+	}, ctx.Com); err != nil {
+		return nil, err
+	}
+	return respOk, nil
 }

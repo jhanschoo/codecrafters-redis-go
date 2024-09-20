@@ -1,11 +1,10 @@
-// Package respreader provides a Parser for the RESP protocol.
+// Package respreader provides a globally shared Reader to initialize the global db of the application in an unsafe manner from a *bufio.Reader.
 package rdbreader
 
 import (
 	"bufio"
 	"encoding/binary"
 	"errors"
-	"strconv"
 	"time"
 )
 
@@ -29,6 +28,7 @@ var (
 	ErrorUnsupportedStringEncoding = errors.New("unsupported string encoding")
 	ErrorIncorrectDbSizes          = errors.New("incomplete db sizes")
 	ErrorDanglingExpiry            = errors.New("dangling expiry")
+	ErrorUnsupportedDbIndex        = errors.New("unsupported db index")
 )
 
 type ValueData struct {
@@ -36,275 +36,210 @@ type ValueData struct {
 	ExpiresAt time.Time
 }
 
+type ResetStateFunc = func(sizeHint int64)
+type UnsafeKvSetterFunc = func(key, value string, expiresAt time.Time)
+
 type readerState struct {
 	br               *bufio.Reader
 	aux              map[string]string
-	dbs              map[int64]map[string]ValueData
-	currentDb        int64
 	currentKvExpiry  time.Time
 	entriesLeft      int64
 	expiryFieldsLeft int64
+	stateResetter    ResetStateFunc
+	unsafeKvSetter   UnsafeKvSetterFunc
 }
 
-func ReadRDB(br *bufio.Reader) (map[int64]map[string]ValueData, error) {
-	st := &readerState{
+var st readerState
+
+func ReadRDBToState(br *bufio.Reader, stateResetter ResetStateFunc, unsafeKvSetter UnsafeKvSetterFunc) error {
+	stateResetter(0)
+	st = readerState{
 		br,
 		make(map[string]string),
-		make(map[int64]map[string]ValueData),
-		-1,
 		time.Time{},
 		-1,
 		-1,
+		stateResetter,
+		unsafeKvSetter,
 	}
-	st, err := st.readRDB()
-	if err != nil {
-		return nil, err
-	}
-	return st.dbs, nil
+	return st.readRDB()
 }
 
-func (st *readerState) readMagicString() (*readerState, error) {
+func (st *readerState) readMagicString() error {
 	magicCandidate := make([]byte, len(version11MagicString))
 	n, err := st.br.Read(magicCandidate)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if n != len(version11MagicString) {
-		return nil, ErrorInsufficientBytesRead
+		return ErrorInsufficientBytesRead
 	}
 	if string(magicCandidate) != version11MagicString {
-		return nil, ErrorUnsupportedRDBVersion
+		return ErrorUnsupportedRDBVersion
 	}
-	return st, nil
+	return nil
 }
 
-func (st *readerState) readAuxField() (*readerState, error) {
+func (st *readerState) readAuxField() error {
 	key, err := readString(st.br)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	value, err := readString(st.br)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	st.aux[key] = value
-	return st, nil
+	return nil
 }
 
-func (st *readerState) readResizeDb() (*readerState, error) {
+func (st *readerState) readResizeDb() error {
 	if st.entriesLeft > 0 || st.expiryFieldsLeft > 0 {
-		return nil, ErrorIncorrectDbSizes
+		return ErrorIncorrectDbSizes
 	}
 	var err error
 	st.entriesLeft, err = readLength(st.br)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	st.expiryFieldsLeft, err = readLength(st.br)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	st.dbs[st.currentDb] = make(map[string]ValueData, st.entriesLeft)
-	return st, nil
+	st.stateResetter(st.entriesLeft)
+	return nil
 }
 
-func (st *readerState) readExpireTime() (*readerState, error) {
+func (st *readerState) readExpireTime() error {
 	if st.expiryFieldsLeft == 0 {
-		return nil, ErrorIncorrectDbSizes
+		return ErrorIncorrectDbSizes
+	}
+	if !st.currentKvExpiry.IsZero() {
+		return ErrorDanglingExpiry
 	}
 	st.expiryFieldsLeft--
 	bs, err := readBytes(st.br, 4)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	st.currentKvExpiry = time.Unix(int64(binary.LittleEndian.Uint32(bs)), 0)
-	return st, nil
+	return nil
 }
 
-func (st *readerState) readExpireTimeMs() (*readerState, error) {
+func (st *readerState) readExpireTimeMs() error {
 	if st.expiryFieldsLeft == 0 {
-		return nil, ErrorIncorrectDbSizes
+		return ErrorIncorrectDbSizes
+	}
+	if !st.currentKvExpiry.IsZero() {
+		return ErrorDanglingExpiry
 	}
 	st.expiryFieldsLeft--
 	bs, err := readBytes(st.br, 8)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	ms := binary.LittleEndian.Uint64(bs)
 	sec := int64(ms / millisecondsInSecond)
 	nsec := int64((ms % millisecondsInSecond) * nanosecondsInMillisecond)
 	st.currentKvExpiry = time.Unix(sec, nsec)
-	return st, nil
+	return nil
 }
 
-func (st *readerState) readSelectDb() (*readerState, error) {
+func (st *readerState) readSelectDb() error {
 	if st.entriesLeft > 0 || st.expiryFieldsLeft > 0 {
-		return nil, ErrorIncorrectDbSizes
+		return ErrorIncorrectDbSizes
 	}
 	db, err := readLength(st.br)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	st.dbs[db] = make(map[string]ValueData)
-	st.currentDb = db
-	return st, nil
+	if db != 0 {
+		return ErrorUnsupportedDbIndex
+	}
+	return nil
 }
 
-func (st *readerState) readEof() (*readerState, error) {
+func (st *readerState) readEof() error {
 	if st.entriesLeft > 0 || st.expiryFieldsLeft > 0 {
-		return nil, ErrorIncorrectDbSizes
+		return ErrorIncorrectDbSizes
 	}
 	if !st.currentKvExpiry.IsZero() {
-		return nil, ErrorDanglingExpiry
+		return ErrorDanglingExpiry
 	}
-	return st, nil
+	return nil
 }
 
-func (st *readerState) readKv(typeByte byte) (*readerState, error) {
+func (st *readerState) readKv(typeByte byte) error {
 	if st.entriesLeft == 0 {
-		return nil, ErrorIncorrectDbSizes
+		return ErrorIncorrectDbSizes
 	}
 	st.entriesLeft--
 	k, err := readString(st.br)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	switch typeByte {
 	case 0: // string
 		v, err := readString(st.br)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		st.dbs[st.currentDb][k] = ValueData{v, st.currentKvExpiry}
+		st.unsafeKvSetter(k, v, st.currentKvExpiry)
 	default:
-		return nil, ErrorUnsupportedValueType
+		return ErrorUnsupportedValueType
 	}
+
+	// reset value-specific state
 	st.currentKvExpiry = time.Time{}
-	return st, nil
+	return nil
 }
 
-func (st *readerState) readRDB() (*readerState, error) {
-	st, err := st.readMagicString()
-	if err != nil {
-		return nil, err
+func (st *readerState) readRDB() error {
+	if err := st.readMagicString(); err != nil {
+		return err
 	}
 	for {
 		opcode, err := st.br.ReadByte()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		switch opcode {
 		// 0xFA: AUX
 		case 0xFA:
-			if _, err = st.readAuxField(); err != nil {
-				return nil, err
+			if err = st.readAuxField(); err != nil {
+				return err
 			}
 		// 0xFB: RESIZEDB
 		case 0xFB:
-			if _, err = st.readResizeDb(); err != nil {
-				return nil, err
+			if err = st.readResizeDb(); err != nil {
+				return err
 			}
 		// 0xFC: EXPIRETIMEMS
 		case 0xFC:
-			if _, err = st.readExpireTimeMs(); err != nil {
-				return nil, err
+			if err = st.readExpireTimeMs(); err != nil {
+				return err
 			}
 		// 0xFD: EXPIRETIME
 		case 0xFD:
-			if _, err = st.readExpireTime(); err != nil {
-				return nil, err
+			if err = st.readExpireTime(); err != nil {
+				return err
 			}
 		// 0xFE: SELECTDB
 		case 0xFE:
-			if _, err = st.readSelectDb(); err != nil {
-				return nil, err
+			if err = st.readSelectDb(); err != nil {
+				return err
 			}
 		// 0xFF: EOF
 		case 0xFF:
-			if _, err = st.readEof(); err != nil {
-				return nil, err
+			if err = st.readEof(); err != nil {
+				return err
 			} else { // explicit else to visually signal distinct handling of case
-				return st, nil
+				return nil
 			}
 		default:
-			if _, err = st.readKv(opcode); err != nil {
-				return nil, err
+			if err = st.readKv(opcode); err != nil {
+				return err
 			}
 		}
 	}
-}
-
-func readBytes(br *bufio.Reader, length int) ([]byte, error) {
-	bs := make([]byte, length)
-	n, err := br.Read(bs)
-	if err != nil {
-		return nil, err
-	}
-	if n != length {
-		return nil, ErrorInsufficientBytesRead
-	}
-	return bs, nil
-}
-
-func readLength(br *bufio.Reader) (int64, error) {
-	b, err := br.ReadByte()
-	if err != nil {
-		return 0, err
-	}
-	switch b >> 6 {
-	case 0b00:
-		return int64(b & 0b00111111), nil
-	case 0b01:
-		b2, err := br.ReadByte()
-		if err != nil {
-			return 0, err
-		}
-		return int64(b&0b00111111)<<8 + int64(b2), nil
-	case 0b10:
-		bs, err := readBytes(br, 4)
-		if err != nil {
-			return 0, err
-		}
-		return int64(int32(binary.BigEndian.Uint32(bs))), nil
-	default:
-		br.UnreadByte()
-		return 0, ErrorUnsupportedLengthEncoding
-	}
-}
-
-func readString(br *bufio.Reader) (string, error) {
-	length, err := readLength(br)
-	if errors.Is(err, ErrorUnsupportedLengthEncoding) {
-		b, err := br.ReadByte()
-		if err != nil {
-			return "", err
-		}
-		switch b {
-		case 0xC0:
-			b1, err := br.ReadByte()
-			if err != nil {
-				return "", err
-			}
-			return strconv.FormatInt(int64(int8(b1)), 10), nil
-		case 0xC1:
-			bs, err := readBytes(br, 2)
-			if err != nil {
-				return "", err
-			}
-			return strconv.FormatInt(int64(int16(binary.LittleEndian.Uint16(bs))), 10), nil
-		case 0xC2:
-			bs, err := readBytes(br, 4)
-			if err != nil {
-				return "", err
-			}
-			return strconv.FormatInt(int64(int32(binary.LittleEndian.Uint32(bs))), 10), nil
-		default:
-			return "", ErrorUnsupportedStringEncoding
-		}
-	}
-	bs, err := readBytes(br, int(length))
-	if err != nil {
-		return "", err
-	}
-	return string(bs), nil
 }

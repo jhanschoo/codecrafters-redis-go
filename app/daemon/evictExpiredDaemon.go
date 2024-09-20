@@ -13,6 +13,7 @@ func evictExpiredDaemon() {
 	log.Println("evictExpiredDaemon: started")
 	for {
 		time.Sleep(evictExpiredDaemonTimeBetweenRuns)
+		// Note that this is a no-op for replicas
 		state.SyncTryEvictExpiredKeysSweep()
 	}
 }

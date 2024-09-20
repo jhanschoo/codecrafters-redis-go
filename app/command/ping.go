@@ -4,11 +4,8 @@ import "github.com/codecrafters-io/redis-starter-go/app/resp"
 
 var pingCommand = "PING"
 
-var pong = &resp.RESPSimpleString{Value: "PONG"}
+var pong = resp.RESPSimpleString{Value: "PONG"}
 
-func handlePing(sa []string, ctx Context) (resp.RESP, error) {
-	if ctx.IsReplica && ctx.IsPrivileged {
-		return nil, nil
-	}
-	return pong, nil
+func handlePing(sa []string, _ Context) (resp.RESP, error) {
+	return &pong, nil
 }

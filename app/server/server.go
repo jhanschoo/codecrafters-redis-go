@@ -9,7 +9,7 @@ import (
 )
 
 func Serve() {
-	port, _ := config.Get("port")
+	port := config.Get("port")
 
 	l, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
@@ -24,6 +24,6 @@ func Serve() {
 			log.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		go HandleConn(c, nil, false)
+		go HandleConn(c)
 	}
 }

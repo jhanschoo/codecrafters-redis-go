@@ -1,153 +1,171 @@
 package state
 
 import (
-	"bufio"
-	"encoding/hex"
-	"errors"
-	"io/fs"
 	"log"
-	"os"
-	"path"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/codecrafters-io/redis-starter-go/app/client"
 	"github.com/codecrafters-io/redis-starter-go/app/config"
-	"github.com/codecrafters-io/redis-starter-go/app/rdbreader"
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
+	"github.com/codecrafters-io/redis-starter-go/app/respreader"
+	"github.com/codecrafters-io/redis-starter-go/app/utility"
 )
 
 var initialized = false
 
-type StateValue struct {
+// state definition and getters
+
+type State struct {
+	// Replication info
+	// Note: locking, etc. would be necessary if we expect failover scenarios
+	Role         string `json:"role"`
+	MasterReplid string `json:"master_replid"`
+
+	// Note after initialization the different sources of mutation for MasterReplOffset depending on the role
+	// For master, it is mutated by several sources including mutations to the database and liveness checks
+	// For replica, it is mutated by the master connection only
+	MasterReplOffset atomic.Int64   `json:"master_repl_offset"`
+	MasterClient     *client.Client `json:"-"`
+
+	// Database state
+	Db Db `json:"-"`
+	// While a thread holds the lock, no other thread is expected to mutate the database; and the thread itself may not mutate the database
+	// if it acquired a read lock
+	DbMu sync.RWMutex `json:"-"`
+
+	// Replication state
+	// While a thread holds the lock, no other thread is expected to mutate the database in a way that would require propagation, or to mutate the replication stream, or to add replicas (replicas may be removed, and mutations to the database may be made if they do not require propagation)
+	// For deadlock avoidance, the lock should be acquired before the database lock, and the lock should be acquired before the replica lock
+	PropagateMu sync.Mutex `json:"-"`
+}
+
+var state = State{}
+
+func IsReplica() bool {
+	return state.Role == "slave"
+}
+
+func IsReplConn(r *respreader.BufferedRESPConnReader) bool {
+	return state.MasterClient != nil && r == state.MasterClient.BufferedRESPConnReader
+}
+
+func MasterReplid() string {
+	return state.MasterReplid
+}
+
+func ReplOffset() int64 {
+	return state.MasterReplOffset.Load()
+}
+
+func IncrOffset(by int64) {
+	state.MasterReplOffset.Add(by)
+}
+
+func CasOffset(old, new int64) bool {
+	return state.MasterReplOffset.CompareAndSwap(old, new)
+}
+
+func GetReplInfo() utility.Info {
+	return utility.Info{
+		"role":               utility.InfoString(state.Role),
+		"master_replid":      utility.InfoString(state.MasterReplid),
+		"master_repl_offset": utility.InfoString(strconv.FormatInt(state.MasterReplOffset.Load(), 10)),
+	}
+}
+
+func MasterClient() *client.Client {
+	return state.MasterClient
+}
+
+// db struct definitions
+
+type DbValue struct {
 	string
 	expiresAt time.Time
 }
 
-func NewStateValue(value string, expiresAt time.Time) StateValue {
-	return StateValue{string: value, expiresAt: expiresAt}
+func (v *DbValue) IsDefinitelyExpiredAt(t time.Time) bool {
+	return !IsReplica() && !v.expiresAt.IsZero() && v.expiresAt.Before(t)
 }
 
-func InitializeState() {
+type Db = map[string]DbValue
+
+// high-level state management
+
+// Initialization
+
+func Initialize() {
 	if initialized {
-		log.Fatal("state already initialized")
+		log.Fatalf("state already initialized")
 	}
-	// Set initialized to true to prevent reinitialization
-	//   we may set here instead of at the end of the function
-	//   as we expect initialization failure to be fatal.
 	initialized = true
-	dir, _ := config.Get("dir")
-	dbfilename, _ := config.Get("dbfilename")
-	filePath := path.Join(dir, dbfilename)
-	f, err := os.Open(path.Join(dir, dbfilename))
-	if errors.Is(err, fs.ErrNotExist) {
-		log.Printf("RDB file %s does not exist, skipping initialization from RDB file", filePath)
+	replicaof := config.Get("replicaof")
+	if replicaof != "" {
+		initializeReplica()
 	} else {
-		// defer is OK since we don'b care about handling the error here
-		defer f.Close()
-		if err != nil {
-			log.Fatalf("failed to open RDB file: %v", err)
-		}
-		br := bufio.NewReader(f)
-		initializeFromRDB(br)
-		return
-	}
-	log.Println("No RDB file specified or file does not exist, initializing empty state")
-	state = map[int64]*stateShard{
-		0: {data: make(map[string]StateValue)},
+		initializeMaster()
 	}
 }
 
-func initializeFromRDB(br *bufio.Reader) {
-	dbs, err := rdbreader.ReadRDB(br)
-	if err != nil {
-		log.Fatalf("failed to read RDB: %v", err)
-	}
-	state = make(map[int64]*stateShard)
-	for db, data := range dbs {
-		state[db] = &stateShard{data: make(map[string]StateValue)}
-		for k, v := range data {
-			state[db].data[k] = NewStateValue(v.Value, v.ExpiresAt)
-		}
-	}
+// Db operations
+
+func UnsafeSet(key, value string, expiresAt time.Time) {
+	state.Db[key] = DbValue{string: value, expiresAt: expiresAt}
 }
 
-type stateShard struct {
-	data map[string]StateValue
-	mu   sync.RWMutex
+func UnsafeResetDbWithSizeHint(sizeHint int64) {
+	state.Db = make(map[string]DbValue, sizeHint)
 }
 
-var state map[int64]*stateShard
-
-// getStateShardForKey for now returns a global state variable.
-// This function is intended to allow us to shard the state in the future.
-// to achieve greater concurrency.
-func getStateShardForDbAndKey(db int64, _ string) *stateShard {
-	return state[db]
-}
-
-func getAllStateShardsForDb(db int64) []*stateShard {
-	return []*stateShard{state[db]}
-}
-
-func Set(db int64, key, value string, px int64) {
-	ml := getStateShardForDbAndKey(db, key)
+func Set(key, value string, px int64) {
 	// zero time means no expiry
 	var expiresAt time.Time
 	if px != -1 {
 		expiresAt = time.Now().Add(time.Duration(px) * time.Millisecond)
 	}
-	ml.mu.Lock()
-	ml.data[key] = StateValue{string: value, expiresAt: expiresAt}
-	ml.mu.Unlock()
+	state.DbMu.Lock()
+	UnsafeSet(key, value, expiresAt)
+	state.DbMu.Unlock()
 }
 
-func Get(db int64, key string) (string, bool) {
-	ml := getStateShardForDbAndKey(db, key)
-	ml.mu.RLock()
-	v, ok := ml.data[key]
-	ml.mu.RUnlock()
-	if !ok {
+func Get(key string) (string, bool) {
+	state.DbMu.RLock()
+	v, ok := state.Db[key]
+	state.DbMu.RUnlock()
+	if ok && !v.expiresAt.IsZero() && v.expiresAt.Before(time.Now()) {
+		go TryEvictExpiredKey(key)
 		return "", false
 	}
-	if !v.expiresAt.IsZero() && v.expiresAt.Before(time.Now()) {
-		go tryEvictExpiredKey(db, key)
-		return "", false
-	}
-	return v.string, true
+	return v.string, ok
 }
 
-func Keys(db int64) []string {
-	lengthEstimate := 0
-	shards := getAllStateShardsForDb(db)
-	for _, shard := range shards {
-		lengthEstimate += len(shard.data) + 10
-	}
-	keys := make([]string, 0, lengthEstimate)
-	for _, shard := range shards {
-		shard.mu.RLock()
-	}
+func Keys() []string {
+	keys := make([]string, 0, len(state.Db)+len(state.Db)/10)
 	now := time.Now()
-	for _, shard := range shards {
-		for k, v := range shard.data {
-			if !v.expiresAt.IsZero() && v.expiresAt.Before(now) {
-				continue
-			}
-			keys = append(keys, k)
+	state.DbMu.RLock()
+	defer state.DbMu.RUnlock()
+	for k, v := range state.Db {
+		if v.IsDefinitelyExpiredAt(now) {
+			go TryEvictExpiredKey(k)
+			continue
 		}
-		shard.mu.RUnlock()
+		keys = append(keys, k)
 	}
 	return keys
 }
 
-func tryEvictExpiredKey(db int64, key string) {
-	ml := getStateShardForDbAndKey(db, key)
-	ml.mu.Lock()
-	defer ml.mu.Unlock()
-	v, ok := ml.data[key]
+func TryEvictExpiredKey(key string) {
+	state.DbMu.Lock()
+	defer state.DbMu.Unlock()
+	v, ok := state.Db[key]
 	if !ok {
 		return
 	}
 	if !v.expiresAt.IsZero() && v.expiresAt.Before(time.Now()) {
-		delete(ml.data, key)
+		delete(state.Db, key)
 	}
 }
 
@@ -162,34 +180,46 @@ func SyncTryEvictExpiredKeysSweep() {
 		evictionSweepSleepPerAcquisition = 10 * time.Millisecond
 	)
 
+	if IsReplica() {
+		log.Println("SyncTryEvictExpiredKeysSweep: not a master, skipping")
+		return
+	}
 	log.Println("SyncTryEvictExpiredKeysSweep: started")
-	for db := range state {
-		for _, ml := range getAllStateShardsForDb(db) {
-			if len(ml.data) < evictionSweepMapSizeThreshold {
-				continue
-			}
-			now := time.Now()
-			ml.mu.Lock()
-			i := 0
-			for k, v := range ml.data {
-				if !v.expiresAt.IsZero() && v.expiresAt.Before(now) {
-					delete(ml.data, k)
-				}
-				i++
-				if i >= evictionSweepCountPerAcquisition {
-					i = 0
-					ml.mu.Unlock()
-					time.Sleep(evictionSweepSleepPerAcquisition)
-					now = time.Now()
-					ml.mu.Lock()
-				}
-			}
-			ml.mu.Unlock()
+	state.DbMu.RLock()
+	if len(state.Db) < evictionSweepMapSizeThreshold {
+		return
+	}
+	state.DbMu.RUnlock()
+	now := time.Now()
+	state.DbMu.Lock()
+	i := 0
+	for k, v := range state.Db {
+		if v.IsDefinitelyExpiredAt(now) {
+			delete(state.Db, k)
+		}
+		i++
+		if i >= evictionSweepCountPerAcquisition {
+			state.DbMu.Unlock()
+			i = 0
+			time.Sleep(evictionSweepSleepPerAcquisition)
+			now = time.Now()
+			state.DbMu.Lock()
 		}
 	}
+	state.DbMu.Unlock()
 }
 
-func DummyDumpStateAsString() string {
-	bs, _ := hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
-	return string(bs)
+// replication operations
+// Note that replicas are expected to execute this function just as with the master, except that they have no replicas of their own to propagate to
+func ExecuteAndReplicateCommand(f func() error, cmd resp.RESP) error {
+	cmdstr := cmd.SerializeRESP()
+	delta := int64(len(cmdstr))
+	state.PropagateMu.Lock()
+	defer state.PropagateMu.Unlock()
+	if err := f(); err != nil {
+		return err
+	}
+	IncrOffset(delta)
+	unsafePropagate(replMessage{s: cmdstr, isAck: false})
+	return nil
 }

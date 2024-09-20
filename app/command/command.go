@@ -2,90 +2,100 @@ package command
 
 import (
 	"errors"
+	"log"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
+	"github.com/codecrafters-io/redis-starter-go/app/respreader"
+	"github.com/codecrafters-io/redis-starter-go/app/state"
 )
 
-func init() {
-	defaultHandler.registerStandard(pingCommand, handlePing)
-	defaultHandler.registerBasic(echoCommand, handleEcho)
-	defaultHandler.registerStandard(setCommand, handleSet)
-	defaultHandler.registerBasic(getCommand, handleGet)
-	defaultHandler.registerBasic(configCommand, handleConfigCommands)
-	defaultHandler.registerBasic(keysCommand, handleKeys)
-	defaultHandler.registerBasic(infoCommand, handleInfo)
-	defaultHandler.registerStandard(replconfCommand, handleReplconf)
-	defaultHandler.register(psyncCommand, handlePsync)
-	defaultHandler.registerStandard(waitCommand, handleWait)
+var (
+	respOk   = &resp.RESPSimpleString{Value: "OK"}
+	respNull = &resp.RESPNull{CompatibilityFlag: 1}
+)
+
+// a standard subhandler responds with a RESP, that is the response to the client
+// exactly when the connection is not the replica-master connection
+type standardSubhandler func(sa []string, ctx Context) (resp.RESP, error)
+
+type subhandler func(sa []string, ctx Context) error
+
+var handlers = map[string]subhandler{
+	pingCommand:     standard(handlePing),
+	echoCommand:     standard(handleEcho),
+	setCommand:      standard(handleSet),
+	getCommand:      standard(handleGet),
+	configCommand:   standard(handleConfigCommands),
+	keysCommand:     standard(handleKeys),
+	infoCommand:     standard(handleInfo),
+	replconfCommand: handleReplconf,
+	psyncCommand:    handlePsync,
+	waitCommand:     standard(handleWait),
 }
 
 type Context struct {
-	Conn                    net.Conn
-	Db                      int64
-	IsReplica               bool
-	IsPrivileged            bool
-	BytesProcessed          int64
-	ExecuteAndWriteToSlaves func(func() error, []string)
+	Reader     *respreader.BufferedRESPConnReader
+	IsReplica  bool
+	IsReplConn bool
+	ReplOffset int64
+	Com        resp.RESP
 }
 
-type Handler interface {
-	Do(com resp.RESP, ctx Context) error
-}
-
-func (ch *CommandHandler) registerBasic(com string, do func(sa []string, db int64) (resp.RESP, error)) {
-	ch.registerStandard(com, func(sa []string, ctx Context) (resp.RESP, error) {
-		res, err := do(sa, ctx.Db)
-		return res, err
-	})
-}
-
-func (ch *CommandHandler) registerStandard(com string, do func(sa []string, ctx Context) (resp.RESP, error)) {
-	ch.register(com, func(sa []string, ctx Context) error {
-		res, err := do(sa, ctx)
+func standard(h standardSubhandler) subhandler {
+	return func(sa []string, ctx Context) error {
+		res, err := h(sa, ctx)
 		if err != nil {
 			return err
 		}
-		if res == nil {
+		if ctx.IsReplConn {
 			return nil
 		}
-		_, err = ctx.Conn.Write([]byte(res.SerializeRESP()))
-		return err
-	})
+		return writeRESP(ctx.Reader.Conn, res)
+	}
 }
 
-type subhandler struct {
-	Command string
-	Do      func(sa []string, ctx Context) error
-}
-
-func (ch *CommandHandler) register(com string, do func(sa []string, ctx Context) error) {
-	ch.handlers[com] = subhandler{Command: com, Do: do}
-}
-
-var defaultHandler = CommandHandler{
-	handlers: make(map[string]subhandler),
-}
-
-func GetDefaultHandler() Handler {
-	return &defaultHandler
-}
-
-type CommandHandler struct {
-	handlers map[string]subhandler
-}
-
-func (h *CommandHandler) Do(com resp.RESP, ctx Context) error {
+func Handle(com resp.RESP, r *respreader.BufferedRESPConnReader) error {
+	ctx := Context{
+		Reader:     r,
+		IsReplica:  state.IsReplica(),
+		IsReplConn: state.IsReplConn(r),
+		ReplOffset: state.ReplOffset(),
+		Com:        com,
+	}
 	sa, ok := resp.DecodeStringSlice(com)
 	if !ok || len(sa) == 0 {
 		return errors.New("invalid input: expected non-empty array of bulk strings")
 	}
-	sh, ok := h.handlers[strings.ToUpper(sa[0])]
+	sh, ok := handlers[strings.ToUpper(sa[0])]
 	if !ok {
-		return writeRESPError(ctx.Conn, errors.New("unsupported command"))
+		return writeRESPError(r.Conn, errors.New("unsupported command"))
 	}
-	return sh.Do(sa, ctx)
+	err := sh(sa, ctx)
+	if ctx.IsReplConn {
+		// reserializing the command to determine bytes read
+		// instead of tracking bytes read in the reader for convenience
+		// this is a bit of a hack, but it's fine for this implementation
+		//
+		// in the replica, mutations to the replication offset all occur on the goroutine that handles the PSYNC command.
+		// when the master sends a mutation to the replica, the offset increment is handled by state.ExecuteAndReplicateCommand for reasons of dataset-offset consistency.
+		// otherwise, it is some form of liveness or sync command that the
+		// master has sent to the replica, and exactly in this case the offset will not have changed (due to increments happening only on the PSYNC command handler)
+		// we can then do a CAS operation to handle exactly this case
+		state.CasOffset(ctx.ReplOffset, ctx.ReplOffset+int64(len(ctx.Com.SerializeRESP())))
+	}
+	return err
+}
+
+func HandleNext(r *respreader.BufferedRESPConnReader) error {
+	com, err := r.ReadRESP()
+	if err != nil {
+		return err
+	}
+	log.Println("handleNext: received request", strconv.Quote(com.SerializeRESP()))
+	return Handle(com, r)
 }
 
 func writeRESP(c net.Conn, res resp.RESP) error {

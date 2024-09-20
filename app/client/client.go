@@ -1,26 +1,27 @@
 package client
 
 import (
-	"bufio"
 	"errors"
+	"log"
 	"net"
+	"strconv"
 	"strings"
 
+	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 	"github.com/codecrafters-io/redis-starter-go/app/respreader"
 )
 
 type Client struct {
-	net.Conn
-	*bufio.Reader
-	RESPReader respreader.Reader
+	*respreader.BufferedRESPConnReader
 }
 
 func (c *Client) ReadRESP() (resp.RESP, error) {
 	return c.RESPReader.ReadRESP()
 }
 
-func NewReplicaClient(replicaof string) (*Client, error) {
+func NewReplicaToMasterClient() (*Client, error) {
+	replicaof := config.Get("replicaof")
 	masterAddrSlice := strings.Split(replicaof, " ")
 	if len(masterAddrSlice) != 2 {
 		return nil, errors.New("invalid input: expected replicaof to be in the format 'host port'")
@@ -38,17 +39,19 @@ func NewClient(serverAddr string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	br := bufio.NewReader(conn)
-	rr := respreader.NewBufReader(br)
+	return FromConn(conn), nil
+}
+
+func FromConn(conn net.Conn) *Client {
 	return &Client{
-		Conn:       conn,
-		Reader:     br,
-		RESPReader: rr,
-	}, nil
+		respreader.NewBufferedRESPConnReader(conn),
+	}
 }
 
 func (c *Client) Do(req []string) (resp.RESP, error) {
-	if _, err := c.Write([]byte(resp.EncodeStringSlice(req).SerializeRESP())); err != nil {
+	s := resp.EncodeStringSlice(req).SerializeRESP()
+	log.Println("client.Do: sending", strconv.Quote(s))
+	if _, err := c.Write([]byte(s)); err != nil {
 		return nil, err
 	}
 	return c.ReadRESP()

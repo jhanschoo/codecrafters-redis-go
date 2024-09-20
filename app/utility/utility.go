@@ -1,9 +1,7 @@
 package utility
 
 import (
-	"log"
 	"math/rand"
-	"strconv"
 	"strings"
 )
 
@@ -16,34 +14,41 @@ func RandomAlphaNumericString(length int) string {
 	return string(b)
 }
 
-func SerializeInfo(info map[string]interface{}) string {
+// INFO command serialization
+
+type InfoValue interface {
+	SerializeTo(sb *strings.Builder)
+}
+
+type InfoString string
+
+func (i InfoString) SerializeTo(sb *strings.Builder) {
+	sb.WriteString(string(i))
+}
+
+type InfoMap map[string]string
+
+func (i InfoMap) SerializeTo(sb *strings.Builder) {
+	var followerEntry bool
+	for k, v := range i {
+		if followerEntry {
+			sb.WriteString(",")
+		}
+		followerEntry = true
+		sb.WriteString(k)
+		sb.WriteString("=")
+		sb.WriteString(v)
+	}
+}
+
+type Info map[string]InfoValue
+
+func (i Info) Serialize() string {
 	var sb strings.Builder
-	for k, w := range info {
+	for k, v := range i {
 		sb.WriteString(k)
 		sb.WriteString(":")
-		switch v := w.(type) {
-		case string:
-			sb.WriteString(v)
-		case float64:
-			sb.WriteString(strconv.FormatFloat(v, 'f', -1, 64))
-		case map[string]interface{}:
-			var followerEntry bool
-			for k1, v1 := range v {
-				if followerEntry {
-					sb.WriteString(",")
-				}
-				v1Str, ok := v1.(string)
-				if !ok {
-					log.Fatalf("unexpected type %T while serializing info", v1)
-				}
-				followerEntry = true
-				sb.WriteString(k1)
-				sb.WriteString("=")
-				sb.WriteString(v1Str)
-			}
-		default:
-			log.Fatalf("unexpected type %T while serializing info", v)
-		}
+		v.SerializeTo(&sb)
 		sb.WriteString("\r\n")
 	}
 	return sb.String()
