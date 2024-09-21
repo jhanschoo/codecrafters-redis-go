@@ -165,6 +165,7 @@ var (
 	ErrorInvalidIdFormat = errors.New("ERR Invalid stream ID format")
 	ErrorInvalidIdValue  = errors.New("ERR The ID specified in XADD must be greater than 0-0")
 	ErrorInvalidNewId    = errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+	ErrorInvalidInput    = errors.New("ERR Invalid input")
 )
 
 func Xadd(key string, id string, fields []string) (string, error) {
@@ -207,6 +208,7 @@ func Xrange(key, start, end string) (resp.RESP, error) {
 		return nil, err
 	}
 	state.DbMu.RLock()
+	defer state.DbMu.RUnlock()
 	v, ok := state.Db[key]
 	if !ok {
 		return nil, ErrorNone
@@ -225,33 +227,48 @@ func Xrange(key, start, end string) (resp.RESP, error) {
 	} else {
 		endIndex = len(stream.data)
 	}
-	state.DbMu.RUnlock()
 	return stream.EncodeSlice(startIndex, endIndex), nil
 }
 
-func Xread(key, start string) (resp.RESP, error) {
-	startMs, startSeq, err := parseStreamEntryXreadId(start)
-	if err != nil {
-		return nil, err
+func Xread(kids []string) (resp.RESP, error) {
+	if len(kids)%2 != 0 {
+		return nil, ErrorInvalidInput
 	}
+	n := len(kids) / 2
+	keys := make([]string, n)
+	mss := make([]int64, n)
+	seqs := make([]int64, n)
+	var err error
+	for i := 0; i < n; i++ {
+		mss[i], seqs[i], err = parseStreamEntryXreadId(kids[n+i])
+		if err != nil {
+			return nil, err
+		}
+		keys[i] = kids[i]
+	}
+	sss := make([]resp.RESP, 0, len(keys))
 	state.DbMu.RLock()
-	v, ok := state.Db[key]
-	if !ok {
-		return nil, ErrorNone
+	defer state.DbMu.RUnlock()
+	for i, key := range keys {
+		v, ok := state.Db[key]
+		if !ok {
+			return nil, ErrorNone
+		}
+		stream, ok := v.(*DbStream)
+		if !ok {
+			return nil, ErrorWrongType
+		}
+		startIndex := stream.SearchGreaterOrEqual(mss[i], seqs[i])
+		if startIndex >= stream.Len() {
+			continue
+		}
+		ss := stream.EncodeSlice(startIndex, -1)
+		skv := make([]resp.RESP, 2)
+		skv[0] = &resp.RESPBulkString{Value: key}
+		skv[1] = ss
+		skvr := &resp.RESPArray{Value: skv}
+		sss = append(sss, skvr)
 	}
-	stream, ok := v.(*DbStream)
-	if !ok {
-		return nil, ErrorWrongType
-	}
-	startIndex := stream.SearchGreaterOrEqual(startMs, startSeq)
-	state.DbMu.RUnlock()
-	ss := stream.EncodeSlice(startIndex, -1)
-	skv := make([]resp.RESP, 2)
-	skv[0] = &resp.RESPBulkString{Value: key}
-	skv[1] = ss
-	skvr := &resp.RESPArray{Value: skv}
-	skvs := make([]resp.RESP, 1)
-	skvs[0] = skvr
-	skvsa := &resp.RESPArray{Value: skvs}
-	return skvsa, nil
+	sssa := &resp.RESPArray{Value: sss}
+	return sssa, nil
 }
