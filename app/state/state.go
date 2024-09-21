@@ -1,7 +1,9 @@
 package state
 
 import (
+	"errors"
 	"log"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -81,17 +83,82 @@ func MasterClient() *client.Client {
 }
 
 // db struct definitions
+var (
+	ErrorNone      = errors.New("ERR no such key")
+	ErrorWrongType = errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+)
 
-type DbValue struct {
+type Db = map[string]DbValue
+
+type DbValue interface {
+	Type() string
+}
+
+type DefinitelyExpirer interface {
+	IsDefinitelyExpiredAt(t time.Time) bool
+}
+
+type DbNone struct{}
+
+var _ DbValue = (*DbNone)(nil)
+
+func (v *DbNone) Type() string {
+	return "none"
+}
+
+var NoneValue = DbNone{}
+
+type DbString struct {
 	string
 	expiresAt time.Time
 }
 
-func (v *DbValue) IsDefinitelyExpiredAt(t time.Time) bool {
+var _ DbValue = (*DbString)(nil)
+var _ DefinitelyExpirer = (*DbString)(nil)
+
+func (v *DbString) Type() string {
+	return "string"
+}
+
+func (v *DbString) IsDefinitelyExpiredAt(t time.Time) bool {
 	return !IsReplica() && !v.expiresAt.IsZero() && v.expiresAt.Before(t)
 }
 
-type Db = map[string]DbValue
+type DbStream struct {
+	data []DbStreamEntry
+}
+
+type DbStreamEntry struct {
+	string
+	fields []string
+}
+
+var _ DbValue = (*DbStream)(nil)
+
+func (v *DbStream) Type() string {
+	return "stream"
+}
+
+var _ sort.Interface = (*DbStream)(nil)
+
+func (v *DbStream) Len() int {
+	return len(v.data)
+}
+
+func (v *DbStream) Less(i, j int) bool {
+	return v.data[i].string < v.data[j].string
+}
+
+func (v *DbStream) Swap(i, j int) {
+	v.data[i], v.data[j] = v.data[j], v.data[i]
+}
+
+func (v *DbStream) LastId() string {
+	if len(v.data) == 0 {
+		return ""
+	}
+	return v.data[len(v.data)-1].string
+}
 
 // high-level state management
 
@@ -112,34 +179,26 @@ func Initialize() {
 
 // Db operations
 
+// Initialization and replication operations
+
 func UnsafeSet(key, value string, expiresAt time.Time) {
-	state.Db[key] = DbValue{string: value, expiresAt: expiresAt}
+	state.Db[key] = &DbString{string: value, expiresAt: expiresAt}
 }
 
 func UnsafeResetDbWithSizeHint(sizeHint int64) {
 	state.Db = make(map[string]DbValue, sizeHint)
 }
 
-func Set(key, value string, px int64) {
-	// zero time means no expiry
-	var expiresAt time.Time
-	if px != -1 {
-		expiresAt = time.Now().Add(time.Duration(px) * time.Millisecond)
-	}
-	state.DbMu.Lock()
-	UnsafeSet(key, value, expiresAt)
-	state.DbMu.Unlock()
-}
+// General operations
 
-func Get(key string) (string, bool) {
+func Type(key string) string {
 	state.DbMu.RLock()
 	v, ok := state.Db[key]
 	state.DbMu.RUnlock()
-	if ok && !v.expiresAt.IsZero() && v.expiresAt.Before(time.Now()) {
-		go TryEvictExpiredKey(key)
-		return "", false
+	if !ok {
+		return NoneValue.Type()
 	}
-	return v.string, ok
+	return v.Type()
 }
 
 func Keys() []string {
@@ -148,13 +207,45 @@ func Keys() []string {
 	state.DbMu.RLock()
 	defer state.DbMu.RUnlock()
 	for k, v := range state.Db {
-		if v.IsDefinitelyExpiredAt(now) {
+		if w, ok := v.(DefinitelyExpirer); ok && w.IsDefinitelyExpiredAt(now) {
 			go TryEvictExpiredKey(k)
 			continue
 		}
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// String operations
+
+func Set(key, value string, px int64) error {
+	// zero time means no expiry
+	var expiresAt time.Time
+	if px != -1 {
+		expiresAt = time.Now().Add(time.Duration(px) * time.Millisecond)
+	}
+	state.DbMu.Lock()
+	UnsafeSet(key, value, expiresAt)
+	state.DbMu.Unlock()
+	return nil
+}
+
+func Get(key string) (string, error) {
+	state.DbMu.RLock()
+	v, ok := state.Db[key]
+	state.DbMu.RUnlock()
+	if !ok {
+		return "", ErrorNone
+	}
+	w, ok := v.(*DbString)
+	if !ok {
+		return "", ErrorWrongType
+	}
+	if !w.expiresAt.IsZero() && w.expiresAt.Before(time.Now()) {
+		go TryEvictExpiredKey(key)
+		return "", ErrorNone
+	}
+	return w.string, nil
 }
 
 func TryEvictExpiredKey(key string) {
@@ -164,7 +255,7 @@ func TryEvictExpiredKey(key string) {
 	if !ok {
 		return
 	}
-	if !v.expiresAt.IsZero() && v.expiresAt.Before(time.Now()) {
+	if w, ok := v.(DefinitelyExpirer); ok && w.IsDefinitelyExpiredAt(time.Now()) {
 		delete(state.Db, key)
 	}
 }
@@ -194,7 +285,7 @@ func SyncTryEvictExpiredKeysSweep() {
 	state.DbMu.Lock()
 	i := 0
 	for k, v := range state.Db {
-		if v.IsDefinitelyExpiredAt(now) {
+		if w, ok := v.(DefinitelyExpirer); ok && w.IsDefinitelyExpiredAt(now) {
 			delete(state.Db, k)
 		}
 		i++
@@ -209,7 +300,32 @@ func SyncTryEvictExpiredKeysSweep() {
 	state.DbMu.Unlock()
 }
 
+// Stream operations
+var (
+	ErrorInvalidId = errors.New("ERR invalid stream ID specified as stream command argument")
+)
+
+func Xadd(key string, id string, fields []string) (string, error) {
+	state.DbMu.Lock()
+	defer state.DbMu.Unlock()
+	v, ok := state.Db[key]
+	if !ok {
+		v = &DbStream{data: make([]DbStreamEntry, 0, 1)}
+		state.Db[key] = v
+	}
+	stream, ok := v.(*DbStream)
+	if !ok {
+		return "", ErrorWrongType
+	}
+	if id <= stream.LastId() {
+		return "", ErrorInvalidId
+	}
+	stream.data = append(stream.data, DbStreamEntry{id, fields})
+	return id, nil
+}
+
 // replication operations
+
 // Note that replicas are expected to execute this function just as with the master, except that they have no replicas of their own to propagate to
 func ExecuteAndReplicateCommand(f func() error, cmd resp.RESP) error {
 	cmdstr := cmd.SerializeRESP()
