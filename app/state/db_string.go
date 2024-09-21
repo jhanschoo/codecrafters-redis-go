@@ -1,8 +1,14 @@
 package state
 
 import (
+	"errors"
 	"log"
+	"strconv"
 	"time"
+)
+
+var (
+	ErrorNotInteger = errors.New("ERR value is not an integer or out of range")
 )
 
 type DbString struct {
@@ -31,6 +37,31 @@ func Set(key, value string, px int64) error {
 	UnsafeSet(key, value, expiresAt)
 	state.DbMu.Unlock()
 	return nil
+}
+
+func Incr(key string) (int64, error) {
+	state.DbMu.Lock()
+	defer state.DbMu.Unlock()
+	v, ok := state.Db[key]
+	if !ok {
+		state.Db[key] = &DbString{string: "1", expiresAt: time.Time{}}
+		return 1, nil
+	}
+	w, ok := v.(*DbString)
+	if !ok {
+		return 0, ErrorNotInteger
+	}
+	if !w.expiresAt.IsZero() && w.expiresAt.Before(time.Now()) {
+		state.Db[key] = &DbString{string: "1", expiresAt: time.Time{}}
+		return 1, nil
+	}
+	i, err := strconv.ParseInt(w.string, 10, 64)
+	if err != nil {
+		return 0, ErrorNotInteger
+	}
+	i++
+	UnsafeSet(key, strconv.FormatInt(i, 10), w.expiresAt)
+	return i, nil
 }
 
 func Get(key string) (string, error) {

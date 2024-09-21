@@ -38,6 +38,7 @@ var handlers = map[string]subhandler{
 	xaddCommand:     standard(handleXadd),
 	xrangeCommand:   standard(handleXrange),
 	xreadCommand:    standard(handleXread),
+	incrCommand:     standard(handleIncr),
 }
 
 type Context struct {

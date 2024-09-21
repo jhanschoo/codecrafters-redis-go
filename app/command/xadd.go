@@ -12,6 +12,9 @@ func handleXadd(sa []string, ctx Context) (resp.RESP, error) {
 		return &resp.RESPSimpleError{Value: "Invalid input: expected an at least 4-element array"}, nil
 	}
 	key, id := sa[1], sa[2]
+	if ctx.IsReplica && !ctx.IsReplConn {
+		return &resp.RESPSimpleError{Value: "READONLY You can't write against a read only replica."}, nil
+	}
 	if err := state.ExecuteAndReplicateCommand(func() error {
 		var err error
 		id, err = state.Xadd(key, id, sa[3:])
