@@ -22,7 +22,7 @@ func handleIncr(sa []string, ctx Context) (resp.RESP, error) {
 		return err
 		// TODO: change replication command to SET for expiry consistency
 	}, ctx.Com); err != nil {
-		return nil, err
+		return &resp.RESPSimpleError{Value: err.Error()}, nil
 	}
 	return resp.RESPInteger{Value: res}, nil
 }
