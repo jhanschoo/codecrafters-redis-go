@@ -171,16 +171,22 @@ func Xadd(key string, id string, fields []string) (string, error) {
 }
 
 func Xrange(key, start, end string) (resp.RESP, error) {
-	startMs, startSeq, err := parseStreamEntryQueryId(start, false)
+	var startMs, startSeq, endMs, endSeq int64
+	var startIndex, endIndex int
+	var err error
+	if start != "-" {
+		startMs, startSeq, err = parseStreamEntryQueryId(start, false)
+	}
 	if err != nil {
 		return nil, err
 	}
-	endMs, endSeq, err := parseStreamEntryQueryId(end, true)
+	if end != "+" {
+		endMs, endSeq, err = parseStreamEntryQueryId(end, true)
+	}
 	if err != nil {
 		return nil, err
 	}
 	state.DbMu.RLock()
-	defer state.DbMu.RUnlock()
 	v, ok := state.Db[key]
 	if !ok {
 		return nil, ErrorNone
@@ -189,7 +195,16 @@ func Xrange(key, start, end string) (resp.RESP, error) {
 	if !ok {
 		return nil, ErrorWrongType
 	}
-	startIndex := stream.SearchGreaterOrEqual(startMs, startSeq)
-	endIndex := stream.SearchGreaterOrEqual(endMs, endSeq)
+	if start != "-" {
+		startIndex = stream.SearchGreaterOrEqual(startMs, startSeq)
+	} else {
+		startIndex = 1
+	}
+	if end != "+" {
+		endIndex = stream.SearchGreaterOrEqual(endMs, endSeq)
+	} else {
+		endIndex = len(stream.data)
+	}
+	state.DbMu.RUnlock()
 	return stream.EncodeSlice(startIndex, endIndex), nil
 }
