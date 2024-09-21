@@ -15,11 +15,12 @@ func handleXadd(sa []string, ctx Context) (resp.RESP, error) {
 	if ctx.IsReplica && !ctx.IsReplConn {
 		return &resp.RESPSimpleError{Value: "READONLY You can't write against a read only replica."}, nil
 	}
-	if err := state.ExecuteAndReplicateCommand(func() error {
+	coms := []resp.RESP{ctx.Com}
+	if err := state.ExecuteAndReplicateCommand(func() ([]resp.RESP, error) {
 		var err error
 		id, err = state.Xadd(key, id, sa[3:])
-		return err
-	}, ctx.Com); err != nil {
+		return coms, err
+	}); err != nil {
 		if err == state.ErrorNone {
 			return respNull, nil
 		}

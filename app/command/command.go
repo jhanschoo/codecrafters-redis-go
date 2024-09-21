@@ -47,6 +47,7 @@ type Context struct {
 	IsReplConn bool
 	ReplOffset int64
 	Com        resp.RESP
+	Queue      []resp.RESP
 }
 
 func standard(h standardSubhandler) subhandler {

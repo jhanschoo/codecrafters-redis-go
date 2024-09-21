@@ -175,15 +175,17 @@ func Keys() []string {
 // replication operations
 
 // Note that replicas are expected to execute this function just as with the master, except that they have no replicas of their own to propagate to
-func ExecuteAndReplicateCommand(f func() error, cmd resp.RESP) error {
-	cmdstr := cmd.SerializeRESP()
-	delta := int64(len(cmdstr))
+func ExecuteAndReplicateCommand(f func() ([]resp.RESP, error)) error {
 	state.PropagateMu.Lock()
 	defer state.PropagateMu.Unlock()
-	if err := f(); err != nil {
+	cmds, err := f()
+	if err != nil {
 		return err
 	}
-	IncrOffset(delta)
-	unsafePropagate(replMessage{s: cmdstr, ack: nil})
+	for _, cmd := range cmds {
+		cmdstr := cmd.SerializeRESP()
+		IncrOffset(int64(len(cmdstr)))
+		unsafePropagate(replMessage{s: cmdstr, ack: nil})
+	}
 	return nil
 }

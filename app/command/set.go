@@ -38,9 +38,10 @@ func handleSet(sa []string, ctx Context) (resp.RESP, error) {
 	if ctx.IsReplica && !ctx.IsReplConn {
 		return &resp.RESPSimpleError{Value: "READONLY You can't write against a read only replica."}, nil
 	}
-	if err := state.ExecuteAndReplicateCommand(func() error {
-		return state.Set(key, value, px)
-	}, ctx.Com); err != nil {
+	coms := []resp.RESP{ctx.Com}
+	if err := state.ExecuteAndReplicateCommand(func() ([]resp.RESP, error) {
+		return coms, state.Set(key, value, px)
+	}); err != nil {
 		return nil, err
 	}
 	return respOk, nil
