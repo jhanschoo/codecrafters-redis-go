@@ -34,6 +34,7 @@ var handlers = map[string]subhandler{
 	replconfCommand: handleReplconf,
 	psyncCommand:    handlePsync,
 	waitCommand:     standard(handleWait),
+	typeCommand:     standard(handleType),
 }
 
 type Context struct {
