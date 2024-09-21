@@ -69,6 +69,9 @@ func parseStreamEntryXrangeId(id string, incr bool) (int64, int64, error) {
 }
 
 func parseStreamEntryXreadId(id string) (int64, int64, error) {
+	if id == "$" {
+		return -1, -1, nil
+	}
 	var seqStr string = "0"
 	if i := strings.IndexRune(id, '-'); i != -1 {
 		seqStr = id[i+1:]
@@ -283,7 +286,10 @@ func Xread(kids []string, blockTimeout time.Duration) (resp.RESP, error) {
 		if !ok {
 			return nil, ErrorWrongType
 		}
-		startIndex := stream.SearchGreaterOrEqual(mss[i], seqs[i])
+		startIndex := stream.Len()
+		if mss[i] != -1 {
+			startIndex = stream.SearchGreaterOrEqual(mss[i], seqs[i])
+		}
 
 		// handle no new items
 		if startIndex >= stream.Len() {
