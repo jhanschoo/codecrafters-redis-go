@@ -5,7 +5,6 @@ import (
 	"log"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -109,66 +108,6 @@ func (v *DbNone) Type() string {
 
 var NoneValue = DbNone{}
 
-type DbString struct {
-	string
-	expiresAt time.Time
-}
-
-var _ DbValue = (*DbString)(nil)
-var _ DefinitelyExpirer = (*DbString)(nil)
-
-func (v *DbString) Type() string {
-	return "string"
-}
-
-func (v *DbString) IsDefinitelyExpiredAt(t time.Time) bool {
-	return !IsReplica() && !v.expiresAt.IsZero() && v.expiresAt.Before(t)
-}
-
-type DbStream struct {
-	data []DbStreamEntry
-}
-
-type DbStreamEntry struct {
-	ms     int64
-	seq    int64
-	fields []string
-}
-
-func NewDbStreamEntry(id string, fields []string) (DbStreamEntry, error) {
-	ms, seq, err := parseStreamEntryId(id)
-	if err != nil {
-		return DbStreamEntry{}, err
-	}
-	return DbStreamEntry{ms, seq, fields}, nil
-}
-
-func parseStreamEntryId(id string) (int64, int64, error) {
-	if id == "*" {
-		return -1, -1, nil
-	}
-	parts := strings.Split(id, "-")
-	if len(parts) != 2 {
-		return 0, 0, ErrorInvalidIdFormat
-	}
-	ms, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || ms < 0 {
-		return 0, 0, ErrorInvalidIdFormat
-	}
-	if parts[1] == "*" {
-		return ms, -1, nil
-	}
-	seq, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil || seq < 0 {
-		return 0, 0, ErrorInvalidIdFormat
-	}
-	return ms, seq, err
-}
-
-func (e DbStreamEntry) Id() string {
-	return strconv.FormatInt(e.ms, 10) + "-" + strconv.FormatInt(e.seq, 10)
-}
-
 var _ DbValue = (*DbStream)(nil)
 
 func (v *DbStream) Type() string {
@@ -176,54 +115,6 @@ func (v *DbStream) Type() string {
 }
 
 var _ sort.Interface = (*DbStream)(nil)
-
-func (v *DbStream) Len() int {
-	return len(v.data)
-}
-
-func (v *DbStream) Less(i, j int) bool {
-	return v.data[i].ms < v.data[j].ms || (v.data[i].ms == v.data[j].ms && v.data[i].seq < v.data[j].seq)
-}
-
-func (v *DbStream) Swap(i, j int) {
-	v.data[i], v.data[j] = v.data[j], v.data[i]
-}
-
-func (v *DbStream) nextValidId(ms, seq int64) (int64, int64, error) {
-	if ms == -1 {
-		ms = time.Now().UnixMilli()
-		if v.data[len(v.data)-1].ms > ms {
-			ms = v.data[len(v.data)-1].ms
-		}
-		seq = -1
-	}
-	if ms == 0 && seq == 0 {
-		return 0, 0, ErrorInvalidIdValue
-	}
-	last := v.data[len(v.data)-1]
-	if seq == -1 {
-		if last.ms < ms {
-			return ms, 0, nil
-		}
-		if last.ms == ms {
-			return ms, last.seq + 1, nil
-		}
-		return 0, 0, ErrorInvalidNewId
-	}
-	if last.ms < ms || (last.ms == ms && last.seq < seq) {
-		return ms, seq, nil
-	}
-	return 0, 0, ErrorInvalidNewId
-}
-
-func (v *DbStream) NewDbStreamEntry(id string, fields []string) (DbStreamEntry, error) {
-	ms, seq, err := parseStreamEntryId(id)
-	if err != nil {
-		return DbStreamEntry{}, err
-	}
-	ms, seq, err = v.nextValidId(ms, seq)
-	return DbStreamEntry{ms, seq, fields}, err
-}
 
 // high-level state management
 
@@ -279,119 +170,6 @@ func Keys() []string {
 		keys = append(keys, k)
 	}
 	return keys
-}
-
-// String operations
-
-func Set(key, value string, px int64) error {
-	// zero time means no expiry
-	var expiresAt time.Time
-	if px != -1 {
-		expiresAt = time.Now().Add(time.Duration(px) * time.Millisecond)
-	}
-	state.DbMu.Lock()
-	UnsafeSet(key, value, expiresAt)
-	state.DbMu.Unlock()
-	return nil
-}
-
-func Get(key string) (string, error) {
-	state.DbMu.RLock()
-	v, ok := state.Db[key]
-	state.DbMu.RUnlock()
-	if !ok {
-		return "", ErrorNone
-	}
-	w, ok := v.(*DbString)
-	if !ok {
-		return "", ErrorWrongType
-	}
-	if !w.expiresAt.IsZero() && w.expiresAt.Before(time.Now()) {
-		go TryEvictExpiredKey(key)
-		return "", ErrorNone
-	}
-	return w.string, nil
-}
-
-func TryEvictExpiredKey(key string) {
-	state.DbMu.Lock()
-	defer state.DbMu.Unlock()
-	v, ok := state.Db[key]
-	if !ok {
-		return
-	}
-	if w, ok := v.(DefinitelyExpirer); ok && w.IsDefinitelyExpiredAt(time.Now()) {
-		delete(state.Db, key)
-	}
-}
-
-// syncTryEvictExpiredKeys is a helper function for daemons to evict expired keys from all maps. It is expected to run for a long time.
-func SyncTryEvictExpiredKeysSweep() {
-	const (
-		// evictionSweepMapSizeThreshold is the number of keys in a map below which we will not bother to sweep for expired keys.
-		evictionSweepMapSizeThreshold = 1000
-		// evictionSweepCountPerAcquisition is the number of keys we check for expiration each time we acquire the lock
-		evictionSweepCountPerAcquisition = 100
-		// evictionSweepSleepPerAcquisitionInMs is the number of milliseconds we sleep after each acquisition of the lock.
-		evictionSweepSleepPerAcquisition = 10 * time.Millisecond
-	)
-
-	if IsReplica() {
-		log.Println("SyncTryEvictExpiredKeysSweep: not a master, skipping")
-		return
-	}
-	log.Println("SyncTryEvictExpiredKeysSweep: started")
-	state.DbMu.RLock()
-	if len(state.Db) < evictionSweepMapSizeThreshold {
-		return
-	}
-	state.DbMu.RUnlock()
-	now := time.Now()
-	state.DbMu.Lock()
-	i := 0
-	for k, v := range state.Db {
-		if w, ok := v.(DefinitelyExpirer); ok && w.IsDefinitelyExpiredAt(now) {
-			delete(state.Db, k)
-		}
-		i++
-		if i >= evictionSweepCountPerAcquisition {
-			state.DbMu.Unlock()
-			i = 0
-			time.Sleep(evictionSweepSleepPerAcquisition)
-			now = time.Now()
-			state.DbMu.Lock()
-		}
-	}
-	state.DbMu.Unlock()
-}
-
-// Stream operations
-var (
-	ErrorInvalidIdFormat = errors.New("ERR Invalid stream ID format")
-	ErrorInvalidIdValue  = errors.New("ERR The ID specified in XADD must be greater than 0-0")
-	ErrorInvalidNewId    = errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
-)
-
-func Xadd(key string, id string, fields []string) (string, error) {
-	state.DbMu.Lock()
-	defer state.DbMu.Unlock()
-	v, ok := state.Db[key]
-	if !ok {
-		v = &DbStream{data: []DbStreamEntry{
-			{ms: 0, seq: 0, fields: nil},
-		}}
-		state.Db[key] = v
-	}
-	stream, ok := v.(*DbStream)
-	if !ok {
-		return "", ErrorWrongType
-	}
-	e, err := stream.NewDbStreamEntry(id, fields)
-	if err != nil {
-		return "", err
-	}
-	stream.data = append(stream.data, e)
-	return e.Id(), nil
 }
 
 // replication operations
