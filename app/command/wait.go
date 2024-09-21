@@ -1,7 +1,11 @@
 package command
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
+	"github.com/codecrafters-io/redis-starter-go/app/state"
 )
 
 var waitCommand = "WAIT"
@@ -20,6 +24,19 @@ func handleWait(sa []string, ctx Context) (resp.RESP, error) {
 	if len(sa) != 3 {
 		return &resp.RESPSimpleError{Value: `Expected 3 arguments for WAIT`}, nil
 	}
+	if ctx.IsReplica {
+		return &resp.RESPSimpleError{Value: `READONLY You can't WAIT while connected to a read-only replica.`}, nil
+	}
+	minRepl, err := strconv.ParseInt(sa[1], 10, 64)
+	if err != nil {
+		return &resp.RESPSimpleError{Value: `Invalid input: expected integer as 2nd element`}, nil
+	}
+	timeoutInMs, err := strconv.ParseInt(sa[2], 10, 64)
+	if err != nil {
+		return &resp.RESPSimpleError{Value: `Invalid input: expected integer as 3rd element`}, nil
+	}
+	timeout := time.Duration(timeoutInMs) * time.Millisecond
+	acks := state.HandleWait(minRepl, timeout)
 	// dummy implementation
-	return resp.RESPInteger{Value: 0}, nil
+	return resp.RESPInteger{Value: acks}, nil
 }

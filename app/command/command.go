@@ -65,6 +65,7 @@ func Handle(com resp.RESP, r *respreader.BufferedRESPConnReader) error {
 		ReplOffset: state.ReplOffset(),
 		Com:        com,
 	}
+	log.Println("Handle: received request", strconv.Quote(com.SerializeRESP()), "isReplica:", ctx.IsReplica, "isReplConn:", ctx.IsReplConn)
 	sa, ok := resp.DecodeStringSlice(com)
 	if !ok || len(sa) == 0 {
 		return errors.New("invalid input: expected non-empty array of bulk strings")
@@ -94,7 +95,6 @@ func HandleNext(r *respreader.BufferedRESPConnReader) error {
 	if err != nil {
 		return err
 	}
-	log.Println("handleNext: received request", strconv.Quote(com.SerializeRESP()))
 	return Handle(com, r)
 }
 

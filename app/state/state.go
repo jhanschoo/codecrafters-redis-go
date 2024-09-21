@@ -220,6 +220,6 @@ func ExecuteAndReplicateCommand(f func() error, cmd resp.RESP) error {
 		return err
 	}
 	IncrOffset(delta)
-	unsafePropagate(replMessage{s: cmdstr, isAck: false})
+	unsafePropagate(replMessage{s: cmdstr, ack: nil})
 	return nil
 }

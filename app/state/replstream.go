@@ -1,25 +1,26 @@
 package state
 
 import (
-	"bufio"
+	"io"
 	"log"
+	"strconv"
 	"sync"
 
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
 	"github.com/codecrafters-io/redis-starter-go/app/respreader"
 )
 
 type reader = respreader.BufferedRESPConnReader
 
 type replMessage struct {
-	s     string
-	isAck bool
+	s   string
+	ack func(resp.RESP) bool
 }
 
 type replica struct {
 	r  *reader
-	w  *bufio.Writer
+	w  io.Writer
 	dc chan replMessage
-	cc chan byte
 }
 
 var replicas = make(map[*replica]bool)
@@ -28,12 +29,11 @@ var replicas = make(map[*replica]bool)
 // note, of course, that goroutines may be interacting with individual values in the map concurrently
 var replicasMu = sync.Mutex{}
 
-func newReplica(r *reader, w *bufio.Writer) *replica {
+func newReplica(r *reader, w io.Writer) *replica {
 	rep := &replica{
 		r:  r,
 		w:  w,
-		dc: make(chan replMessage, 1),
-		cc: make(chan byte),
+		dc: make(chan replMessage),
 	}
 	return rep
 }
@@ -51,37 +51,83 @@ func unsafePropagate(msg replMessage) {
 	// channels are expected to have single buffer and not block on writes
 	replicasMu.Lock()
 	defer replicasMu.Unlock()
+	log.Printf("unsafePropagate: propagating %s to %d replicas\n", strconv.Quote(msg.s), len(replicas))
 	for r := range replicas {
 		r.dc <- msg
 	}
 }
 
-// forwardCommands runs synchronously on the thread that handled the PSYNC command, and the calling function is expected to do cleanup
+var getAckString = resp.EncodeStringSlice([]string{"REPLCONF", "GETACK", "*"}).SerializeRESP()
+var getAckStringLen = int64(len(getAckString))
+
+func broadcastGetAck(ws *waitState) {
+	state.PropagateMu.Lock()
+	defer state.PropagateMu.Unlock()
+	ws.l.Lock()
+	ws.numReplicas = int64(len(replicas))
+	ws.l.Unlock()
+	// note that we perform the sync even if there are not enough replicas to meet the ack threshold
+	IncrOffset(getAckStringLen)
+	unsafePropagate(replMessage{s: getAckString, ack: func(res resp.RESP) bool {
+		sa, ok := resp.DecodeStringSlice(res)
+		if !ok || len(sa) != 3 || sa[0] != "REPLCONF" || sa[1] != "ACK" {
+			return false
+		}
+		replicaOffset, err := strconv.ParseInt(sa[2], 10, 64)
+		if err != nil {
+			return false
+		}
+		if replicaOffset >= ws.offsetThreshold {
+			ws.l.Lock()
+			ws.numAcked++
+			ws.l.Unlock()
+			ws.cond.Broadcast()
+			return true
+		}
+		return false
+	}})
+}
+
+// forwardCommands is a long-lived function that should run synchronously on the thread that handled the PSYNC command. it
+// 1. spawns a goroutine to synchronously handle reads
+// 2. then devotes itself to synchronously handling writes (acks)
 func (r *replica) forwardCommands() {
-	for {
-		select {
-		case msg := <-r.dc:
-			if msg.isAck {
-				// todo: handle ack
-				continue
-			}
-			n, err := r.w.Write([]byte(msg.s))
+	rhs := make([]func(resp.RESP) bool, 0)
+	rhsMu := sync.Mutex{}
+	go func() {
+		for {
+			res, err := r.r.ReadRESP()
+			log.Printf("forwardCommands %v: Received ack from replica: %s", r, strconv.Quote(res.SerializeRESP()))
 			if err != nil {
-				log.Println("Error writing to replica:", err)
+				log.Println("Error reading from replica:", err)
 				r.unregisterSelf()
 			}
-			if n != len(msg.s) {
-				log.Println("Error writing to replica: short write")
-				r.unregisterSelf()
+			rhsMu.Lock()
+			for i := 0; i < len(rhs); i++ {
+				if rhs[i](res) {
+					rhs = append(rhs[:i], rhs[i+1:]...)
+					i--
+				}
 			}
-			// for codecrafters expectations, we flush after every write
-			if err := r.w.Flush(); err != nil {
-				log.Println("Error flushing to replica:", err)
-				r.unregisterSelf()
-			}
-		// not expected to happen
-		case <-r.cc:
-			return
+			rhsMu.Unlock()
+		}
+	}()
+	for {
+		msg := <-r.dc
+		log.Printf("forwardCommands %v: forwarding %s\n", r, strconv.Quote(msg.s))
+		if msg.ack != nil {
+			rhsMu.Lock()
+			rhs = append(rhs, msg.ack)
+			rhsMu.Unlock()
+		}
+		n, err := r.w.Write([]byte(msg.s))
+		if err != nil {
+			log.Println("Error writing to replica:", err)
+			r.unregisterSelf()
+		}
+		if n != len(msg.s) {
+			log.Println("Error writing to replica: short write")
+			r.unregisterSelf()
 		}
 	}
 }
