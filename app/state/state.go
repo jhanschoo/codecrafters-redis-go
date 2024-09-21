@@ -143,14 +143,26 @@ func NewDbStreamEntry(id string, fields []string) (DbStreamEntry, error) {
 	return DbStreamEntry{ms, seq, fields}, nil
 }
 
-func parseStreamEntryId(id string) (ms, seq int64, err error) {
-	parts := strings.Split(id, "-")
-	ms, err = strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return
+func parseStreamEntryId(id string) (int64, int64, error) {
+	if id == "*" {
+		return -1, -1, nil
 	}
-	seq, err = strconv.ParseInt(parts[1], 10, 64)
-	return
+	parts := strings.Split(id, "-")
+	if len(parts) != 2 {
+		return 0, 0, ErrorInvalidIdFormat
+	}
+	ms, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || ms < 0 {
+		return 0, 0, ErrorInvalidIdFormat
+	}
+	if parts[1] == "*" {
+		return ms, -1, nil
+	}
+	seq, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || seq < 0 {
+		return 0, 0, ErrorInvalidIdFormat
+	}
+	return ms, seq, err
 }
 
 func (e DbStreamEntry) Id() string {
@@ -177,21 +189,46 @@ func (v *DbStream) Swap(i, j int) {
 	v.data[i], v.data[j] = v.data[j], v.data[i]
 }
 
-func (v *DbStream) ValidNextId(id string) error {
-	ms, seq, err := parseStreamEntryId(id)
-	if err != nil {
-		return ErrorInvalidIdFormat
+func (v *DbStream) nextValidId(ms, seq int64) (int64, int64, error) {
+	if ms == -1 {
+		// TODO: implement
+		return 0, 0, ErrorInvalidIdFormat
 	}
-	if !(ms >= 0 && seq > 0) {
-		return ErrorInvalidIdValue
+	if ms == 0 && seq == 0 {
+		return 0, 0, ErrorInvalidIdValue
 	}
 	if len(v.data) == 0 {
-		return nil
+		if seq == -1 {
+			if ms == 0 {
+				return 0, 1, nil
+			}
+			return ms, 0, nil
+		}
+		return ms, seq, nil
 	}
-	if last := v.data[len(v.data)-1]; last.ms > ms || (last.ms == ms && last.seq >= seq) {
-		return ErrorInvalidNewId
+	last := v.data[len(v.data)-1]
+	if seq == -1 {
+		if last.ms < ms {
+			return ms, 0, nil
+		}
+		if last.ms == ms {
+			return ms, last.seq + 1, nil
+		}
+		return 0, 0, ErrorInvalidNewId
 	}
-	return nil
+	if last.ms < ms || (last.ms == ms && last.seq < seq) {
+		return ms, seq, nil
+	}
+	return 0, 0, ErrorInvalidNewId
+}
+
+func (v *DbStream) NewDbStreamEntry(id string, fields []string) (DbStreamEntry, error) {
+	ms, seq, err := parseStreamEntryId(id)
+	if err != nil {
+		return DbStreamEntry{}, err
+	}
+	ms, seq, err = v.nextValidId(ms, seq)
+	return DbStreamEntry{ms, seq, fields}, err
 }
 
 // high-level state management
@@ -353,15 +390,12 @@ func Xadd(key string, id string, fields []string) (string, error) {
 	if !ok {
 		return "", ErrorWrongType
 	}
-	if err := stream.ValidNextId(id); err != nil {
-		return "", err
-	}
-	e, err := NewDbStreamEntry(id, fields)
+	e, err := stream.NewDbStreamEntry(id, fields)
 	if err != nil {
 		return "", err
 	}
 	stream.data = append(stream.data, e)
-	return id, nil
+	return e.Id(), nil
 }
 
 // replication operations
