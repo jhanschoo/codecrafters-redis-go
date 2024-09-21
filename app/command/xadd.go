@@ -20,9 +20,6 @@ func handleXadd(sa []string, ctx Context) (resp.RESP, error) {
 		if err == state.ErrorNone {
 			return respNull, nil
 		}
-		if err == state.ErrorWrongType {
-			return &resp.RESPSimpleError{Value: err.Error()}, nil
-		}
 		return &resp.RESPSimpleError{Value: err.Error()}, nil
 	}
 	return &resp.RESPBulkString{Value: id}, nil

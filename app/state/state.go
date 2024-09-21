@@ -5,6 +5,7 @@ import (
 	"log"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -129,8 +130,31 @@ type DbStream struct {
 }
 
 type DbStreamEntry struct {
-	string
+	ms     int64
+	seq    int64
 	fields []string
+}
+
+func NewDbStreamEntry(id string, fields []string) (DbStreamEntry, error) {
+	ms, seq, err := parseStreamEntryId(id)
+	if err != nil {
+		return DbStreamEntry{}, err
+	}
+	return DbStreamEntry{ms, seq, fields}, nil
+}
+
+func parseStreamEntryId(id string) (ms, seq int64, err error) {
+	parts := strings.Split(id, "-")
+	ms, err = strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return
+	}
+	seq, err = strconv.ParseInt(parts[1], 10, 64)
+	return
+}
+
+func (e DbStreamEntry) Id() string {
+	return strconv.FormatInt(e.ms, 10) + "-" + strconv.FormatInt(e.seq, 10)
 }
 
 var _ DbValue = (*DbStream)(nil)
@@ -146,18 +170,28 @@ func (v *DbStream) Len() int {
 }
 
 func (v *DbStream) Less(i, j int) bool {
-	return v.data[i].string < v.data[j].string
+	return v.data[i].ms < v.data[j].ms || (v.data[i].ms == v.data[j].ms && v.data[i].seq < v.data[j].seq)
 }
 
 func (v *DbStream) Swap(i, j int) {
 	v.data[i], v.data[j] = v.data[j], v.data[i]
 }
 
-func (v *DbStream) LastId() string {
-	if len(v.data) == 0 {
-		return ""
+func (v *DbStream) ValidNextId(id string) error {
+	ms, seq, err := parseStreamEntryId(id)
+	if err != nil {
+		return ErrorInvalidIdFormat
 	}
-	return v.data[len(v.data)-1].string
+	if !(ms >= 0 && seq > 0) {
+		return ErrorInvalidIdValue
+	}
+	if len(v.data) == 0 {
+		return nil
+	}
+	if last := v.data[len(v.data)-1]; last.ms > ms || (last.ms == ms && last.seq >= seq) {
+		return ErrorInvalidNewId
+	}
+	return nil
 }
 
 // high-level state management
@@ -302,7 +336,9 @@ func SyncTryEvictExpiredKeysSweep() {
 
 // Stream operations
 var (
-	ErrorInvalidId = errors.New("ERR invalid stream ID specified as stream command argument")
+	ErrorInvalidIdFormat = errors.New("ERR Invalid stream ID format")
+	ErrorInvalidIdValue  = errors.New("ERR The ID specified in XADD must be greater than 0-0")
+	ErrorInvalidNewId    = errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
 )
 
 func Xadd(key string, id string, fields []string) (string, error) {
@@ -317,10 +353,14 @@ func Xadd(key string, id string, fields []string) (string, error) {
 	if !ok {
 		return "", ErrorWrongType
 	}
-	if id <= stream.LastId() {
-		return "", ErrorInvalidId
+	if err := stream.ValidNextId(id); err != nil {
+		return "", err
 	}
-	stream.data = append(stream.data, DbStreamEntry{id, fields})
+	e, err := NewDbStreamEntry(id, fields)
+	if err != nil {
+		return "", err
+	}
+	stream.data = append(stream.data, e)
 	return id, nil
 }
 
