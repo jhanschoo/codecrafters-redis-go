@@ -60,7 +60,7 @@ func unsafePropagate(msg replMessage) {
 var getAckString = resp.EncodeStringSlice([]string{"REPLCONF", "GETACK", "*"}).SerializeRESP()
 var getAckStringLen = int64(len(getAckString))
 
-func broadcastGetAck(ws *waitState) {
+func propagateGetAck(ws *waitState) {
 	state.PropagateMu.Lock()
 	defer state.PropagateMu.Unlock()
 	ws.l.Lock()
@@ -80,8 +80,10 @@ func broadcastGetAck(ws *waitState) {
 		if replicaOffset >= ws.offsetThreshold {
 			ws.l.Lock()
 			ws.numAcked++
+			if ws.numAcked >= ws.ackThreshold {
+				ws.cond.Broadcast()
+			}
 			ws.l.Unlock()
-			ws.cond.Broadcast()
 			return true
 		}
 		return false

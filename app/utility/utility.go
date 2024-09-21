@@ -3,6 +3,8 @@ package utility
 import (
 	"math/rand"
 	"strings"
+	"sync"
+	"time"
 )
 
 func RandomAlphaNumericString(length int) string {
@@ -52,4 +54,18 @@ func (i Info) Serialize() string {
 		sb.WriteString("\r\n")
 	}
 	return sb.String()
+}
+
+func Timeout(t time.Duration, mu *sync.Mutex, cond *sync.Cond, f func() bool) {
+	// if t == 0, the timeout is infinite
+	if t == 0 {
+		return
+	}
+	time.Sleep(t)
+	mu.Lock()
+	defer mu.Unlock()
+	if f != nil && !f() {
+		return
+	}
+	cond.Broadcast()
 }

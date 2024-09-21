@@ -3,6 +3,8 @@ package state
 import (
 	"sync"
 	"time"
+
+	"github.com/codecrafters-io/redis-starter-go/app/utility"
 )
 
 type waitState struct {
@@ -13,6 +15,18 @@ type waitState struct {
 	offsetThreshold int64
 	done            bool
 	l               *sync.Mutex
+}
+
+func newWaitState(minRepl, offsetThreshold int64) *waitState {
+	l := &sync.Mutex{}
+	return &waitState{
+		cond:            sync.NewCond(l),
+		numReplicas:     -1,
+		numAcked:        0,
+		ackThreshold:    minRepl,
+		offsetThreshold: offsetThreshold,
+		l:               l,
+	}
 }
 
 func HandleWait(minRepl int64, timeout time.Duration) int64 {
@@ -26,18 +40,13 @@ func HandleWait(minRepl int64, timeout time.Duration) int64 {
 		replicasMu.Unlock()
 		return int64(l)
 	}
-	l := &sync.Mutex{}
-	ws := &waitState{
-		cond:            sync.NewCond(l),
-		numReplicas:     -1,
-		numAcked:        0,
-		ackThreshold:    minRepl,
-		offsetThreshold: state.MasterReplOffset.Load(),
-		l:               l,
-	}
+	ws := newWaitState(minRepl, state.MasterReplOffset.Load())
+	go utility.Timeout(timeout, ws.l, ws.cond, func() bool {
+		ws.done = true
+		return true
+	})
 
-	go handleWaitTimeout(timeout, ws)
-	broadcastGetAck(ws)
+	propagateGetAck(ws)
 	// at this point, numReplicas is set on ws
 
 	for {
@@ -57,16 +66,4 @@ func handleWaitAux(ws *waitState) int64 {
 		return ws.numAcked
 	}
 	return -1
-}
-
-func handleWaitTimeout(timeout time.Duration, ws *waitState) {
-	// if timeout is 0 the command waits indefinitely and we can return immediately
-	if timeout == 0 {
-		return
-	}
-	time.Sleep(timeout)
-	ws.l.Lock()
-	ws.done = true
-	ws.l.Unlock()
-	ws.cond.Broadcast()
 }

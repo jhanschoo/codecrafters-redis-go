@@ -5,9 +5,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
+	"github.com/codecrafters-io/redis-starter-go/app/utility"
 )
 
 type DbStreamEntry struct {
@@ -170,8 +172,10 @@ var (
 
 func Xadd(key string, id string, fields []string) (string, error) {
 	ms, seq, err := parseStreamEntryXaddId(id)
+	if err != nil {
+		return "", err
+	}
 	state.DbMu.Lock()
-	defer state.DbMu.Unlock()
 	v, ok := state.Db[key]
 	if !ok {
 		v = &DbStream{data: []DbStreamEntry{
@@ -181,13 +185,35 @@ func Xadd(key string, id string, fields []string) (string, error) {
 	}
 	stream, ok := v.(*DbStream)
 	if !ok {
+		state.DbMu.Unlock()
 		return "", ErrorWrongType
 	}
 	e, err := stream.NewDbStreamEntryForStream(ms, seq, fields)
 	if err != nil {
+		state.DbMu.Unlock()
 		return "", err
 	}
 	stream.data = append(stream.data, e)
+	ss := stream.EncodeSlice(len(stream.data)-1, len(stream.data))
+	streamBlockListenersMu.Lock()
+	skv := make([]resp.RESP, 2)
+	skv[0] = &resp.RESPBulkString{Value: key}
+	skv[1] = ss
+	skvr := &resp.RESPArray{Value: skv}
+	sssa := &resp.RESPArray{Value: []resp.RESP{skvr}}
+	state.DbMu.Unlock()
+	listeners, ok := streamBlockListeners[key]
+	if ok {
+		for listener := range listeners {
+			listener.l.Lock()
+			if listener.res == nullListenerRes {
+				listener.res = sssa
+			}
+			listener.cond.Broadcast()
+			listener.l.Unlock()
+		}
+	}
+	streamBlockListenersMu.Unlock()
 	return e.Id(), nil
 }
 
@@ -230,7 +256,7 @@ func Xrange(key, start, end string) (resp.RESP, error) {
 	return stream.EncodeSlice(startIndex, endIndex), nil
 }
 
-func Xread(kids []string) (resp.RESP, error) {
+func Xread(kids []string, blockTimeout time.Duration) (resp.RESP, error) {
 	if len(kids)%2 != 0 {
 		return nil, ErrorInvalidInput
 	}
@@ -248,7 +274,6 @@ func Xread(kids []string) (resp.RESP, error) {
 	}
 	sss := make([]resp.RESP, 0, len(keys))
 	state.DbMu.RLock()
-	defer state.DbMu.RUnlock()
 	for i, key := range keys {
 		v, ok := state.Db[key]
 		if !ok {
@@ -259,6 +284,8 @@ func Xread(kids []string) (resp.RESP, error) {
 			return nil, ErrorWrongType
 		}
 		startIndex := stream.SearchGreaterOrEqual(mss[i], seqs[i])
+
+		// handle no new items
 		if startIndex >= stream.Len() {
 			continue
 		}
@@ -269,6 +296,54 @@ func Xread(kids []string) (resp.RESP, error) {
 		skvr := &resp.RESPArray{Value: skv}
 		sss = append(sss, skvr)
 	}
-	sssa := &resp.RESPArray{Value: sss}
-	return sssa, nil
+	if len(sss) != 0 || blockTimeout < 0 {
+		sssa := &resp.RESPArray{Value: sss}
+		state.DbMu.RUnlock()
+		return sssa, nil
+	}
+	// block
+	listener := newStreamBlockListener(keys)
+	listener.l.Lock()
+	streamBlockListenersMu.Lock()
+	for _, key := range keys {
+		if streamBlockListeners[key] == nil {
+			streamBlockListeners[key] = make(map[*streamBlockListener]bool, 1)
+		}
+		streamBlockListeners[key][listener] = true
+	}
+	state.DbMu.RUnlock()
+	streamBlockListenersMu.Unlock()
+	go utility.Timeout(blockTimeout, listener.l, listener.cond, nil)
+	listener.cond.Wait()
+	res := listener.res
+	listener.l.Unlock()
+	streamBlockListenersMu.Lock()
+	for _, key := range keys {
+		delete(streamBlockListeners[key], listener)
+	}
+	streamBlockListenersMu.Unlock()
+	return res, nil
 }
+
+type streamBlockListener struct {
+	l    *sync.Mutex
+	cond *sync.Cond
+	keys []string
+	res  resp.RESP
+}
+
+func newStreamBlockListener(keys []string) *streamBlockListener {
+	l := &sync.Mutex{}
+	return &streamBlockListener{
+		l:    l,
+		cond: sync.NewCond(l),
+		keys: keys,
+		res:  nullListenerRes,
+	}
+}
+
+var streamBlockListeners = make(map[string]map[*streamBlockListener]bool)
+
+var streamBlockListenersMu sync.Mutex
+
+var nullListenerRes = &resp.RESPNull{CompatibilityFlag: 1}
