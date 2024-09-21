@@ -191,20 +191,14 @@ func (v *DbStream) Swap(i, j int) {
 
 func (v *DbStream) nextValidId(ms, seq int64) (int64, int64, error) {
 	if ms == -1 {
-		// TODO: implement
-		return 0, 0, ErrorInvalidIdFormat
+		ms = time.Now().UnixMilli()
+		if v.data[len(v.data)-1].ms > ms {
+			ms = v.data[len(v.data)-1].ms
+		}
+		seq = -1
 	}
 	if ms == 0 && seq == 0 {
 		return 0, 0, ErrorInvalidIdValue
-	}
-	if len(v.data) == 0 {
-		if seq == -1 {
-			if ms == 0 {
-				return 0, 1, nil
-			}
-			return ms, 0, nil
-		}
-		return ms, seq, nil
 	}
 	last := v.data[len(v.data)-1]
 	if seq == -1 {
@@ -383,7 +377,9 @@ func Xadd(key string, id string, fields []string) (string, error) {
 	defer state.DbMu.Unlock()
 	v, ok := state.Db[key]
 	if !ok {
-		v = &DbStream{data: make([]DbStreamEntry, 0, 1)}
+		v = &DbStream{data: []DbStreamEntry{
+			{ms: 0, seq: 0, fields: nil},
+		}}
 		state.Db[key] = v
 	}
 	stream, ok := v.(*DbStream)
