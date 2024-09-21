@@ -16,7 +16,7 @@ type DbStreamEntry struct {
 	fields []string
 }
 
-func parseStreamEntryId(id string) (int64, int64, error) {
+func parseStreamEntryXaddId(id string) (int64, int64, error) {
 	if id == "*" {
 		return -1, -1, nil
 	}
@@ -38,7 +38,7 @@ func parseStreamEntryId(id string) (int64, int64, error) {
 	return ms, seq, err
 }
 
-func parseStreamEntryQueryId(id string, incr bool) (int64, int64, error) {
+func parseStreamEntryXrangeId(id string, incr bool) (int64, int64, error) {
 	if i := strings.IndexRune(id, '-'); i != -1 {
 		ms, err := strconv.ParseInt(id[:i], 10, 64)
 		if err != nil || ms < 0 {
@@ -64,6 +64,23 @@ func parseStreamEntryQueryId(id string, incr bool) (int64, int64, error) {
 		return 0, 1, nil
 	}
 	return ms, 0, nil
+}
+
+func parseStreamEntryXreadId(id string) (int64, int64, error) {
+	var seqStr string = "0"
+	if i := strings.IndexRune(id, '-'); i != -1 {
+		seqStr = id[i+1:]
+		id = id[:i]
+	}
+	ms, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return 0, 0, ErrorInvalidIdFormat
+	}
+	seq, err := strconv.ParseInt(seqStr, 10, 64)
+	if err != nil || seq < 0 {
+		return 0, 0, ErrorInvalidIdFormat
+	}
+	return ms, seq + 1, nil
 }
 
 func (e DbStreamEntry) Id() string {
@@ -125,6 +142,9 @@ func (v *DbStream) SearchGreaterOrEqual(ms, seq int64) int {
 }
 
 func (v *DbStream) EncodeSlice(i, j int) resp.RESP {
+	if j == -1 {
+		j = len(v.data)
+	}
 	slice := v.data[i:j]
 	value := make([]resp.RESP, len(slice))
 	for i, e := range slice {
@@ -148,7 +168,7 @@ var (
 )
 
 func Xadd(key string, id string, fields []string) (string, error) {
-	ms, seq, err := parseStreamEntryId(id)
+	ms, seq, err := parseStreamEntryXaddId(id)
 	state.DbMu.Lock()
 	defer state.DbMu.Unlock()
 	v, ok := state.Db[key]
@@ -175,13 +195,13 @@ func Xrange(key, start, end string) (resp.RESP, error) {
 	var startIndex, endIndex int
 	var err error
 	if start != "-" {
-		startMs, startSeq, err = parseStreamEntryQueryId(start, false)
+		startMs, startSeq, err = parseStreamEntryXrangeId(start, false)
 	}
 	if err != nil {
 		return nil, err
 	}
 	if end != "+" {
-		endMs, endSeq, err = parseStreamEntryQueryId(end, true)
+		endMs, endSeq, err = parseStreamEntryXrangeId(end, true)
 	}
 	if err != nil {
 		return nil, err
@@ -207,4 +227,31 @@ func Xrange(key, start, end string) (resp.RESP, error) {
 	}
 	state.DbMu.RUnlock()
 	return stream.EncodeSlice(startIndex, endIndex), nil
+}
+
+func Xread(key, start string) (resp.RESP, error) {
+	startMs, startSeq, err := parseStreamEntryXreadId(start)
+	if err != nil {
+		return nil, err
+	}
+	state.DbMu.RLock()
+	v, ok := state.Db[key]
+	if !ok {
+		return nil, ErrorNone
+	}
+	stream, ok := v.(*DbStream)
+	if !ok {
+		return nil, ErrorWrongType
+	}
+	startIndex := stream.SearchGreaterOrEqual(startMs, startSeq)
+	state.DbMu.RUnlock()
+	ss := stream.EncodeSlice(startIndex, -1)
+	skv := make([]resp.RESP, 2)
+	skv[0] = &resp.RESPBulkString{Value: key}
+	skv[1] = ss
+	skvr := &resp.RESPArray{Value: skv}
+	skvs := make([]resp.RESP, 1)
+	skvs[0] = skvr
+	skvsa := &resp.RESPArray{Value: skvs}
+	return skvsa, nil
 }
