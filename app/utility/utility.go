@@ -92,7 +92,7 @@ func (c *ComSlice) Len() int {
 	return len(c.coms)
 }
 
-func (c *ComSlice) IsUsed() bool {
+func (c *ComSlice) IsActive() bool {
 	return c.coms != nil
 }
 

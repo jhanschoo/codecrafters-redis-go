@@ -36,6 +36,7 @@ var handlers = map[string]subhandler{
 	xreadCommand:    standard(handleXread),
 	incrCommand:     standard(handleIncr),
 	multiCommand:    standard(handleMulti),
+	execCommand:     standard(handleExec),
 }
 
 type Context struct {
@@ -71,8 +72,9 @@ func Handle(ctx Context) error {
 	if !ok || len(sa) == 0 {
 		return errors.New("invalid input: expected non-empty array of bulk strings")
 	}
-	if ctx.Queued.IsUsed() {
+	if ctx.Queued.IsActive() && !isTransactionCommand(sa) {
 		ctx.Queued.AppendCom(sa)
+		writeRESP(ctx.Reader.Conn, resp.QueuedLit)
 	}
 	sh, ok := handlers[strings.ToUpper(sa[0])]
 	if !ok {
@@ -121,4 +123,12 @@ func writeRESPError(c net.Conn, err error) error {
 		return writeRESP(c, &resp.RESPBulkError{Value: errMsg})
 	}
 	return writeRESP(c, &resp.RESPSimpleError{Value: errMsg})
+}
+
+func isTransactionCommand(sa []string) bool {
+	switch strings.ToUpper(sa[0]) {
+	case multiCommand, execCommand, discardCommand:
+		return true
+	}
+	return false
 }
