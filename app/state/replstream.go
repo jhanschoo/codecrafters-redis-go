@@ -61,8 +61,8 @@ var getAckString = resp.EncodeStringSlice([]string{"REPLCONF", "GETACK", "*"}).S
 var getAckStringLen = int64(len(getAckString))
 
 func propagateGetAck(ws *waitState) {
-	state.PropagateMu.Lock()
-	defer state.PropagateMu.Unlock()
+	LockPropagateMu()
+	defer UnlockPropagateMu()
 	ws.l.Lock()
 	ws.numReplicas = int64(len(replicas))
 	ws.l.Unlock()

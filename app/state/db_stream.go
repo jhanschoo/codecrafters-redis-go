@@ -178,7 +178,7 @@ func Xadd(key string, id string, fields []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	state.DbMu.Lock()
+	LockDbMu()
 	v, ok := state.Db[key]
 	if !ok {
 		v = &DbStream{data: []DbStreamEntry{
@@ -188,12 +188,12 @@ func Xadd(key string, id string, fields []string) (string, error) {
 	}
 	stream, ok := v.(*DbStream)
 	if !ok {
-		state.DbMu.Unlock()
+		UnlockDbMu()
 		return "", ErrorWrongType
 	}
 	e, err := stream.NewDbStreamEntryForStream(ms, seq, fields)
 	if err != nil {
-		state.DbMu.Unlock()
+		UnlockDbMu()
 		return "", err
 	}
 	stream.data = append(stream.data, e)
@@ -204,7 +204,7 @@ func Xadd(key string, id string, fields []string) (string, error) {
 	skv[1] = ss
 	skvr := &resp.RESPArray{Value: skv}
 	sssa := &resp.RESPArray{Value: []resp.RESP{skvr}}
-	state.DbMu.Unlock()
+	UnlockDbMu()
 	listeners, ok := streamBlockListeners[key]
 	if ok {
 		for listener := range listeners {
@@ -236,8 +236,8 @@ func Xrange(key, start, end string) (resp.RESP, error) {
 	if err != nil {
 		return nil, err
 	}
-	state.DbMu.RLock()
-	defer state.DbMu.RUnlock()
+	RLockDbMu()
+	defer RUnlockDbMu()
 	v, ok := state.Db[key]
 	if !ok {
 		return nil, ErrorNone
@@ -276,7 +276,7 @@ func Xread(kids []string, blockTimeout time.Duration) (resp.RESP, error) {
 		keys[i] = kids[i]
 	}
 	sss := make([]resp.RESP, 0, len(keys))
-	state.DbMu.RLock()
+	RLockDbMu()
 	for i, key := range keys {
 		v, ok := state.Db[key]
 		if !ok {
@@ -304,7 +304,7 @@ func Xread(kids []string, blockTimeout time.Duration) (resp.RESP, error) {
 	}
 	if len(sss) != 0 || blockTimeout < 0 {
 		sssa := &resp.RESPArray{Value: sss}
-		state.DbMu.RUnlock()
+		RUnlockDbMu()
 		return sssa, nil
 	}
 	// block
@@ -317,7 +317,7 @@ func Xread(kids []string, blockTimeout time.Duration) (resp.RESP, error) {
 		}
 		streamBlockListeners[key][listener] = true
 	}
-	state.DbMu.RUnlock()
+	RUnlockDbMu()
 	streamBlockListenersMu.Unlock()
 	go utility.Timeout(blockTimeout, listener.l, listener.cond, nil)
 	listener.cond.Wait()

@@ -24,16 +24,16 @@ func HandlePsync(r *respreader.BufferedRESPConnReader) error {
 	bpr := bufio.NewReader(pr)
 	replica := newReplica(r, pw)
 
-	state.PropagateMu.Lock()
+	LockPropagateMu()
 	replid := state.MasterReplid
 	replOffset := state.MasterReplOffset.Load()
-	state.DbMu.RLock()
+	RLockDbMu()
 	dumpr := unsafeInitiateDump()
-	state.DbMu.RUnlock()
+	RUnlockDbMu()
 	replica.registerSelf()
 	go replica.forwardCommands()
 	// at this point, the replica is registered, with a goroutine forwarding propagations into the write buffer, so we can release the lock
-	state.PropagateMu.Unlock()
+	UnlockPropagateMu()
 	mr := io.MultiReader(dumpr, bpr)
 
 	// write initial response

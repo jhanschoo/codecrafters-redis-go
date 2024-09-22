@@ -32,6 +32,8 @@ type State struct {
 	MasterReplOffset atomic.Int64   `json:"master_repl_offset"`
 	MasterClient     *client.Client `json:"-"`
 
+	// WARNING: it is an error to directly manipulate DbMu and PropagateMu; use the provided functions instead
+
 	// Database state
 	Db Db `json:"-"`
 	// While a thread holds the lock, no other thread is expected to mutate the database; and the thread itself may not mutate the database
@@ -42,9 +44,52 @@ type State struct {
 	// While a thread holds the lock, no other thread is expected to mutate the database in a way that would require propagation, or to mutate the replication stream, or to add replicas (replicas may be removed, and mutations to the database may be made if they do not require propagation)
 	// For deadlock avoidance, the lock should be acquired before the database lock, and the lock should be acquired before the replica lock
 	PropagateMu sync.Mutex `json:"-"`
+
+	TransactionUnderway bool `json:"-"`
 }
 
 var state = State{}
+
+func LockDbMu() {
+	if !state.TransactionUnderway {
+		state.DbMu.Lock()
+	}
+}
+func UnlockDbMu() {
+	if !state.TransactionUnderway {
+		state.DbMu.Unlock()
+	}
+}
+func RLockDbMu() {
+	if !state.TransactionUnderway {
+		state.DbMu.RLock()
+	}
+}
+func RUnlockDbMu() {
+	if !state.TransactionUnderway {
+		state.DbMu.RUnlock()
+	}
+}
+func LockPropagateMu() {
+	if !state.TransactionUnderway {
+		state.PropagateMu.Lock()
+	}
+}
+func UnlockPropagateMu() {
+	if !state.TransactionUnderway {
+		state.PropagateMu.Unlock()
+	}
+}
+func BeginTransaction() {
+	LockPropagateMu()
+	LockDbMu()
+	state.TransactionUnderway = true
+}
+func EndTransaction() {
+	state.TransactionUnderway = false
+	UnlockDbMu()
+	UnlockPropagateMu()
+}
 
 func IsReplica() bool {
 	return state.Role == "slave"
@@ -148,9 +193,9 @@ func UnsafeResetDbWithSizeHint(sizeHint int64) {
 // General operations
 
 func Type(key string) string {
-	state.DbMu.RLock()
+	RLockDbMu()
 	v, ok := state.Db[key]
-	state.DbMu.RUnlock()
+	RUnlockDbMu()
 	if !ok {
 		return NoneValue.Type()
 	}
@@ -160,8 +205,8 @@ func Type(key string) string {
 func Keys() []string {
 	keys := make([]string, 0, len(state.Db)+len(state.Db)/10)
 	now := time.Now()
-	state.DbMu.RLock()
-	defer state.DbMu.RUnlock()
+	RLockDbMu()
+	defer RUnlockDbMu()
 	for k, v := range state.Db {
 		if w, ok := v.(DefinitelyExpirer); ok && w.IsDefinitelyExpiredAt(now) {
 			go TryEvictExpiredKey(k)
@@ -176,10 +221,10 @@ func Keys() []string {
 
 // Note that replicas are expected to execute this function just as with the master, except that they have no replicas of their own to propagate to
 func ExecuteAndReplicateCommand(f func() ([]resp.RESP, error)) error {
-	state.PropagateMu.Lock()
-	defer state.PropagateMu.Unlock()
+	LockPropagateMu()
+	defer UnlockPropagateMu()
 	cmds, err := f()
-	if err != nil {
+	if err != nil || len(cmds) == 0 {
 		return err
 	}
 	for _, cmd := range cmds {

@@ -2,6 +2,7 @@ package command
 
 import (
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
+	"github.com/codecrafters-io/redis-starter-go/app/state"
 )
 
 var execCommand = "EXEC"
@@ -17,19 +18,24 @@ func handleExec(sa []string, ctx Context) (resp.RESP, error) {
 	}
 	coms := ctx.Queued.RetrieveComs()
 	res := &resp.RESPArray{Value: make([]resp.RESP, len(coms))}
-	for i, com := range coms {
-		r, err := ctx.Handle(Context{
-			Reader:        ctx.Reader,
-			IsReplica:     ctx.IsReplica,
-			IsReplConn:    ctx.IsReplConn,
-			Com:           com,
-			Queued:        ctx.Queued,
-			InTransaction: true,
-		})
-		if err != nil {
-			return nil, err
+	state.BeginTransaction()
+	state.ExecuteAndReplicateCommand(func() ([]resp.RESP, error) {
+		for i, com := range coms {
+			r, err := ctx.Handle(Context{
+				Reader:        ctx.Reader,
+				IsReplica:     ctx.IsReplica,
+				IsReplConn:    ctx.IsReplConn,
+				Com:           com,
+				Queued:        ctx.Queued,
+				InTransaction: true,
+			})
+			if err != nil {
+				return nil, err
+			}
+			res.Value[i] = r
 		}
-		res.Value[i] = r
-	}
+		return nil, nil
+	})
+	state.EndTransaction()
 	return res, nil
 }

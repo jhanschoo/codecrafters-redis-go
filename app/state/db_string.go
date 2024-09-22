@@ -33,15 +33,15 @@ func Set(key, value string, px int64) error {
 	if px != -1 {
 		expiresAt = time.Now().Add(time.Duration(px) * time.Millisecond)
 	}
-	state.DbMu.Lock()
+	LockDbMu()
 	UnsafeSet(key, value, expiresAt)
-	state.DbMu.Unlock()
+	UnlockDbMu()
 	return nil
 }
 
 func Incr(key string) (int64, error) {
-	state.DbMu.Lock()
-	defer state.DbMu.Unlock()
+	LockDbMu()
+	defer UnlockDbMu()
 	v, ok := state.Db[key]
 	if !ok {
 		state.Db[key] = &DbString{string: "1", expiresAt: time.Time{}}
@@ -65,9 +65,9 @@ func Incr(key string) (int64, error) {
 }
 
 func Get(key string) (string, error) {
-	state.DbMu.RLock()
+	RLockDbMu()
 	v, ok := state.Db[key]
-	state.DbMu.RUnlock()
+	RUnlockDbMu()
 	if !ok {
 		return "", ErrorNone
 	}
@@ -83,8 +83,8 @@ func Get(key string) (string, error) {
 }
 
 func TryEvictExpiredKey(key string) {
-	state.DbMu.Lock()
-	defer state.DbMu.Unlock()
+	LockDbMu()
+	defer UnlockDbMu()
 	v, ok := state.Db[key]
 	if !ok {
 		return
@@ -110,13 +110,13 @@ func SyncTryEvictExpiredKeysSweep() {
 		return
 	}
 	log.Println("SyncTryEvictExpiredKeysSweep: started")
-	state.DbMu.RLock()
+	RLockDbMu()
 	if len(state.Db) < evictionSweepMapSizeThreshold {
 		return
 	}
-	state.DbMu.RUnlock()
+	RUnlockDbMu()
 	now := time.Now()
-	state.DbMu.Lock()
+	LockDbMu()
 	i := 0
 	for k, v := range state.Db {
 		if w, ok := v.(DefinitelyExpirer); ok && w.IsDefinitelyExpiredAt(now) {
@@ -124,12 +124,12 @@ func SyncTryEvictExpiredKeysSweep() {
 		}
 		i++
 		if i >= evictionSweepCountPerAcquisition {
-			state.DbMu.Unlock()
+			UnlockDbMu()
 			i = 0
 			time.Sleep(evictionSweepSleepPerAcquisition)
 			now = time.Now()
-			state.DbMu.Lock()
+			LockDbMu()
 		}
 	}
-	state.DbMu.Unlock()
+	UnlockDbMu()
 }

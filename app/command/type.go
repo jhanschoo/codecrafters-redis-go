@@ -7,7 +7,7 @@ import (
 
 var typeCommand = "TYPE"
 
-func handleType(sa []string, _ Context) (resp.RESP, error) {
+func handleType(sa []string, ctx Context) (resp.RESP, error) {
 	if len(sa) != 2 {
 		return &resp.RESPSimpleError{Value: "Invalid input: expected 2-element array"}, nil
 	}
