@@ -22,7 +22,7 @@ func handleXadd(sa []string, ctx Context) (resp.RESP, error) {
 		return coms, err
 	}); err != nil {
 		if err == state.ErrorNone {
-			return respNull, nil
+			return resp.NullLit, nil
 		}
 		return &resp.RESPSimpleError{Value: err.Error()}, nil
 	}

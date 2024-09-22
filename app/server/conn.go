@@ -7,16 +7,21 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/app/command"
 	"github.com/codecrafters-io/redis-starter-go/app/respreader"
+	"github.com/codecrafters-io/redis-starter-go/app/utility"
 )
 
 func HandleConn(c net.Conn) error {
 	r := respreader.NewBufferedRESPConnReader(c)
-	return HandleReader(r)
+	return HandleConnReader(r)
 }
 
-func HandleReader(r *respreader.BufferedRESPConnReader) error {
+func HandleConnReader(r *respreader.BufferedRESPConnReader) error {
+	// Warning: opts here is reused
+	queued := utility.NewComSlice()
 	for {
-		if err := command.HandleNext(r); err != nil {
+		if err := command.HandleNext(r, command.HandlerOptions{
+			Queued: queued,
+		}); err != nil {
 			if err == io.EOF {
 				log.Println("handleReader: connection closed by client")
 			} else {

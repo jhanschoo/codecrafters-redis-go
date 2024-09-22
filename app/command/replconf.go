@@ -18,10 +18,10 @@ func handleReplconf(sa []string, ctx Context) error {
 	// dummy implementation
 	switch sa[1] {
 	case "listening-port":
-		writeRESP(ctx.Reader.Conn, respOk)
+		writeRESP(ctx.Reader.Conn, resp.OkLit)
 		return nil
 	case "capa":
-		writeRESP(ctx.Reader.Conn, respOk)
+		writeRESP(ctx.Reader.Conn, resp.OkLit)
 		return nil
 	case "GETACK":
 		ret := []string{"REPLCONF", "ACK", strconv.FormatInt(ctx.ReplOffset, 10)}

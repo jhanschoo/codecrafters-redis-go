@@ -14,7 +14,7 @@ func handleGet(sa []string, _ Context) (resp.RESP, error) {
 	key := sa[1]
 	value, err := state.Get(key)
 	if err == state.ErrorNone {
-		return respNull, nil
+		return resp.NullLit, nil
 	}
 	if err == state.ErrorWrongType {
 		return &resp.RESPSimpleError{Value: err.Error()}, nil

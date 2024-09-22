@@ -44,5 +44,5 @@ func handleSet(sa []string, ctx Context) (resp.RESP, error) {
 	}); err != nil {
 		return nil, err
 	}
-	return respOk, nil
+	return resp.OkLit, nil
 }

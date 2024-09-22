@@ -10,11 +10,7 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 	"github.com/codecrafters-io/redis-starter-go/app/respreader"
 	"github.com/codecrafters-io/redis-starter-go/app/state"
-)
-
-var (
-	respOk   = &resp.RESPSimpleString{Value: "OK"}
-	respNull = &resp.RESPNull{CompatibilityFlag: 1}
+	"github.com/codecrafters-io/redis-starter-go/app/utility"
 )
 
 // a standard subhandler responds with a RESP, that is the response to the client
@@ -39,6 +35,7 @@ var handlers = map[string]subhandler{
 	xrangeCommand:   standard(handleXrange),
 	xreadCommand:    standard(handleXread),
 	incrCommand:     standard(handleIncr),
+	multiCommand:    standard(handleMulti),
 }
 
 type Context struct {
@@ -47,7 +44,11 @@ type Context struct {
 	IsReplConn bool
 	ReplOffset int64
 	Com        resp.RESP
-	Queue      []resp.RESP
+	Queued     *utility.ComSlice
+}
+
+type HandlerOptions struct {
+	Queued *utility.ComSlice
 }
 
 func standard(h standardSubhandler) subhandler {
@@ -63,22 +64,19 @@ func standard(h standardSubhandler) subhandler {
 	}
 }
 
-func Handle(com resp.RESP, r *respreader.BufferedRESPConnReader) error {
-	ctx := Context{
-		Reader:     r,
-		IsReplica:  state.IsReplica(),
-		IsReplConn: state.IsReplConn(r),
-		ReplOffset: state.ReplOffset(),
-		Com:        com,
-	}
+func Handle(ctx Context) error {
+	com := ctx.Com
 	log.Println("Handle: received request", strconv.Quote(com.SerializeRESP()), "isReplica:", ctx.IsReplica, "isReplConn:", ctx.IsReplConn)
 	sa, ok := resp.DecodeStringSlice(com)
 	if !ok || len(sa) == 0 {
 		return errors.New("invalid input: expected non-empty array of bulk strings")
 	}
+	if ctx.Queued.IsUsed() {
+		ctx.Queued.AppendCom(sa)
+	}
 	sh, ok := handlers[strings.ToUpper(sa[0])]
 	if !ok {
-		return writeRESPError(r.Conn, errors.New("unsupported command"))
+		return writeRESPError(ctx.Reader.Conn, errors.New("unsupported command"))
 	}
 	err := sh(sa, ctx)
 	if ctx.IsReplConn {
@@ -96,12 +94,20 @@ func Handle(com resp.RESP, r *respreader.BufferedRESPConnReader) error {
 	return err
 }
 
-func HandleNext(r *respreader.BufferedRESPConnReader) error {
+func HandleNext(r *respreader.BufferedRESPConnReader, opts HandlerOptions) error {
 	com, err := r.ReadRESP()
 	if err != nil {
 		return err
 	}
-	return Handle(com, r)
+	ctx := Context{
+		Reader:     r,
+		IsReplica:  state.IsReplica(),
+		IsReplConn: state.IsReplConn(r),
+		ReplOffset: state.ReplOffset(),
+		Com:        com,
+		Queued:     opts.Queued,
+	}
+	return Handle(ctx)
 }
 
 func writeRESP(c net.Conn, res resp.RESP) error {

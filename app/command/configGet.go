@@ -13,5 +13,5 @@ func handleConfigGet(sa []string, ctx Context) (resp.RESP, error) {
 			return resp.EncodeStringSlice([]string{sa[2], config.Get(sa[2])}), nil
 		}
 	}
-	return respNull, nil
+	return resp.NullLit, nil
 }

@@ -17,7 +17,7 @@ func main() {
 
 	if state.IsReplica() {
 		log.Println("Replica beginning to listen for replication stream")
-		go server.HandleReader(state.MasterClient().BufferedRESPConnReader)
+		go server.HandleConnReader(state.MasterClient().BufferedRESPConnReader)
 	}
 
 	server.Serve()
