@@ -67,7 +67,7 @@ func standard(h standardSubhandler) subhandler {
 
 func Handle(ctx Context) error {
 	com := ctx.Com
-	log.Println("Handle: received request", strconv.Quote(com.SerializeRESP()), "isReplica:", ctx.IsReplica, "isReplConn:", ctx.IsReplConn)
+	log.Println("Handle: received request", strconv.Quote(com.SerializeRESP()), "isReplica:", ctx.IsReplica, "isReplConn:", ctx.IsReplConn, "queued:", ctx.Queued.IsActive())
 	sa, ok := resp.DecodeStringSlice(com)
 	if !ok || len(sa) == 0 {
 		return errors.New("invalid input: expected non-empty array of bulk strings")
@@ -75,6 +75,7 @@ func Handle(ctx Context) error {
 	if ctx.Queued.IsActive() && !isTransactionCommand(sa) {
 		ctx.Queued.AppendCom(sa)
 		writeRESP(ctx.Reader.Conn, resp.QueuedLit)
+		return nil
 	}
 	sh, ok := handlers[strings.ToUpper(sa[0])]
 	if !ok {

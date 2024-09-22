@@ -8,7 +8,7 @@ import (
 
 var psyncCommand = "PSYNC"
 
-var ErrorIsReplica = errors.New("Received PSYNC command on replica node")
+var ErrorIsReplica = errors.New("received PSYNC command on replica node")
 
 func handlePsync(_ []string, ctx Context) error {
 	if ctx.IsReplica {
