@@ -6,8 +6,8 @@ import (
 	"net"
 
 	"github.com/codecrafters-io/redis-starter-go/app/command"
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
 	"github.com/codecrafters-io/redis-starter-go/app/respreader"
-	"github.com/codecrafters-io/redis-starter-go/app/utility"
 )
 
 func HandleConn(c net.Conn) error {
@@ -17,10 +17,11 @@ func HandleConn(c net.Conn) error {
 
 func HandleConnReader(r *respreader.BufferedRESPConnReader) error {
 	// Warning: opts here is reused
-	queued := utility.NewComSlice()
+	queued := resp.NewComSlice()
 	for {
 		if err := command.HandleNext(r, command.HandlerOptions{
-			Queued: queued,
+			Queued:        queued,
+			InTransaction: false,
 		}); err != nil {
 			if err == io.EOF {
 				log.Println("handleReader: connection closed by client")

@@ -10,12 +10,26 @@ var ErrorExecNotTransaction = &resp.RESPSimpleError{Value: "ERR EXEC without MUL
 
 func handleExec(sa []string, ctx Context) (resp.RESP, error) {
 	if len(sa) != 1 {
-		return &resp.RESPSimpleError{Value: "Invalid input: expected 2-element array"}, nil
+		return &resp.RESPSimpleError{Value: "Invalid input: expected 1-element array"}, nil
 	}
 	if !ctx.Queued.IsActive() {
 		return ErrorExecNotTransaction, nil
 	}
-	_ = ctx.Queued.RetrieveComs()
-	res := &resp.RESPArray{Value: make([]resp.RESP, 0)}
+	coms := ctx.Queued.RetrieveComs()
+	res := &resp.RESPArray{Value: make([]resp.RESP, len(coms))}
+	for i, com := range coms {
+		r, err := ctx.Handle(Context{
+			Reader:        ctx.Reader,
+			IsReplica:     ctx.IsReplica,
+			IsReplConn:    ctx.IsReplConn,
+			Com:           com,
+			Queued:        ctx.Queued,
+			InTransaction: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		res.Value[i] = r
+	}
 	return res, nil
 }

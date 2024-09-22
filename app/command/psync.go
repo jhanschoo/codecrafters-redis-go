@@ -3,17 +3,21 @@ package command
 import (
 	"errors"
 
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
 	"github.com/codecrafters-io/redis-starter-go/app/state"
 )
 
 var psyncCommand = "PSYNC"
 
-var ErrorIsReplica = errors.New("received PSYNC command on replica node")
+var (
+	ErrorIsReplica           = errors.New("received PSYNC command on replica node")
+	ErrorNotExpectedToReturn = &resp.RESPSimpleError{Value: "PSYNC command is expected to live indefinitely long"}
+)
 
-func handlePsync(_ []string, ctx Context) error {
+func handlePsync(_ []string, ctx Context) (resp.RESP, error) {
 	if ctx.IsReplica {
-		return ErrorIsReplica
+		return nil, ErrorIsReplica
 	}
 	// The following function call is expected to live indefinitely long
-	return state.HandlePsync(ctx.Reader)
+	return ErrorNotExpectedToReturn, state.HandlePsync(ctx.Reader)
 }

@@ -69,37 +69,3 @@ func (i Info) Serialize() string {
 	}
 	return sb.String()
 }
-
-type ComSlice struct {
-	coms [][]string
-}
-
-func NewComSlice() *ComSlice {
-	return &ComSlice{coms: nil}
-}
-
-func (c *ComSlice) AppendCom(com []string) {
-	c.coms = append(c.coms, com)
-}
-
-func (c *ComSlice) RetrieveComs() [][]string {
-	coms := c.coms
-	c.coms = nil
-	return coms
-}
-
-func (c *ComSlice) Len() int {
-	return len(c.coms)
-}
-
-func (c *ComSlice) IsActive() bool {
-	return c.coms != nil
-}
-
-func (c *ComSlice) Initialize() bool {
-	if c.coms == nil {
-		c.coms = make([][]string, 0)
-		return true
-	}
-	return false
-}

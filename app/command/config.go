@@ -8,7 +8,7 @@ import (
 
 var configCommand = "CONFIG"
 
-var configCommandHandlers = map[string]standardSubhandler{
+var configCommandHandlers = map[string]subhandler{
 	"GET": handleConfigGet,
 }
 
