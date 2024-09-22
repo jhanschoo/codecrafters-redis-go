@@ -1,8 +1,6 @@
 package command
 
 import (
-	"errors"
-
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
@@ -17,5 +15,7 @@ func handleExec(sa []string, ctx Context) (resp.RESP, error) {
 	if !ctx.Queued.IsActive() {
 		return ErrorExecNotTransaction, nil
 	}
-	return nil, errors.New("not implemented")
+	_ = ctx.Queued.RetrieveComs()
+	res := &resp.RESPArray{Value: make([]resp.RESP, 0)}
+	return res, nil
 }
