@@ -34,6 +34,7 @@ var subhandlerMap = map[string]subhandler{
 	execCommand:     handleExec,
 	psyncCommand:    handlePsync,
 	replconfCommand: handleReplconf,
+	discardCommand:  handleDiscard,
 }
 
 type Context struct {
